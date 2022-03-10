@@ -1,0 +1,232 @@
+1;CBT;BO    ;¶À¨§ªo            ;BO          ;USD;6;          ;CBTAG     
+1;CBT;C     ;¥É¦Ì              ;C           ;USD;6;          ;CBTAG     
+1;CBT;FF    ;30¤Ñ§Q²v          ;            ;USD;4;          ;CBTIR     
+1;CBT;FV    ;5¦~¬ü¶Å           ;FV          ;USD;4;          ;CBTIR     
+1;CBT;MYM   ;E-Mirco ¤p¹DÃ£    ;MYM         ;USD;1;          ;CMEFX     
+1;CBT;O     ;¿P³Á              ;O           ;USD;6;          ;CBTAG     
+1;CBT;RR    ;²ÊÁW¦Ì            ;RR          ;USD;6;          ;CBTAG     
+1;CBT;RX    ;¹DÃ£©Ð¦a²£´Á³f    ;RE          ;USD;1;          ;CMEFX     
+1;CBT;S     ;¶À¨§              ;S           ;USD;6;          ;CBTAG     
+1;CBT;SM    ;¶À¨§¯»            ;SM          ;USD;6;          ;CBTAG     
+1;CBT;TN    ;ªø´Á¤Q¦~¬ü¶Å      ;UN          ;USD;4;          ;CBTIR     
+1;CBT;TU    ;¤G¦~¶Å            ;TU          ;USD;4;          ;CBTIR     
+1;CBT;TY    ;¤Q¦~¶Å            ;TY          ;USD;4;          ;CBTIR     
+1;CBT;UB    ;¬üªø¶Å            ;UB          ;USD;4;          ;CBTIR     
+1;CBT;US    ;¤T¤Q¦~¶Å          ;US          ;USD;4;          ;CBTIR     
+1;CBT;W     ;¤p³Á              ;W           ;USD;6;          ;CBTAG     
+1;CBT;YC    ;¤p¥É¦Ì            ;YC          ;USD;6;          ;CBTYC     
+1;CBT;YK    ;¤p¶À¨§            ;YK          ;USD;6;          ;CBTYC     
+1;CBT;YM    ;¤p¹DÃ£            ;YM          ;USD;1;          ;CMEFX     
+1;CFE;VIX   ;ªi°Ê²v«ü¼Æ        ;VX          ;USD;1;          ;CMEFX     
+1;CFE;VXM   ;·L«¬ªi°Ê²v«ü¼Æ    ;VXM         ;USD;1;          ;CMEFX     
+1;CME;AD    ;¿D¹ô              ;AD          ;USD;3;          ;CMEFX     
+1;CME;ADM   ;·L«¬¿D¹ô          ;M6A         ;USD;3;          ;CMEFX     
+1;CME;BP    ;­^Âé              ;BP          ;USD;3;          ;CMEFX     
+1;CME;BPM   ;·L«¬­^Âé          ;M6B         ;USD;3;          ;CMEFX     
+1;CME;BR    ;¤Ú¦è¨½¦Õ          ;BR          ;USD;3;          ;CMEFX     
+1;CME;CD    ;¥[¹ô              ;CD          ;USD;3;          ;CMEFX     
+1;CME;CDM   ;·L«¬¥[¹ô          ;CDM         ;USD;3;          ;CMEFX     
+1;CME;CNK   ;CME¤é¸g225«ü¼Æ    ;NK          ;USD;1;          ;CMEFX     
+1;CME;EC    ;¼Ú¤¸              ;EC          ;USD;3;          ;CMEFX     
+1;CME;ECM   ;·L«¬¼Ú¤¸          ;ECM         ;USD;3;          ;CMEFX     
+1;CME;ED    ;¼Ú¬w¬ü¤¸          ;ED          ;USD;4;          ;CMEED     
+1;CME;ES    ;¤pSP              ;ES          ;USD;1;          ;CMEFX     
+1;CME;FC    ;¦×¤û              ;FC          ;USD;6;          ;CMEAG     
+1;CME;JY    ;¤é¶ê              ;JY          ;USD;3;          ;CMEFX     
+1;CME;JYM   ;·L«¬¤é¶ê          ;MJY         ;USD;3;          ;CMEFX     
+1;CME;LC    ;¬¡¤û              ;LC          ;USD;6;          ;CMEAG     
+1;CME;LH    ;½G½Þ              ;LH          ;USD;6;          ;CMEAG     
+1;CME;M2K   ;E-Micro ¤pÃ¹¯À¨â¤d;M2K         ;USD;1;          ;CMEFX     
+1;CME;M6A   ;·L«¬¿D¹ô          ;M6A         ;USD;3;          ;CMEFX     
+1;CME;M6J   ;·L«¬¤é¤¸          ;M6J         ;USD;3;          ;CMEFX     
+1;CME;MES   ;E-Micro ¤pS&P     ;MES         ;USD;1;          ;CMEFX     
+1;CME;MNQ   ;E-Micro ¤pNQ      ;MNQ         ;USD;1;          ;CMEFX     
+1;CME;MP    ;¾¥¦è­ô©Ü¯Á        ;MP          ;USD;3;          ;CMEFX     
+1;CME;ND    ;NASDAQ100         ;ND          ;USD;1;          ;CMEEQ     
+1;CME;NE    ;¯Ã¹ô              ;NE          ;USD;3;          ;CMEFX     
+1;CME;NE1   ;¯Ã¹ô1             ;NE          ;USD;3;          ;CMEFX     
+1;CME;NQ    ;¤p¨º´µ¹F§J        ;NQ          ;USD;1;          ;CMEFX     
+1;CME;RP    ;¼Ú¤¸§I­^Âé        ;UE          ;GBP;3;          ;CMEFX     
+1;CME;RTY   ;°g§AÃ¹¯À¨â¤d«ü    ;RTY         ;USD;1;          ;CMEFX     
+1;CME;RY    ;¼Ú¤¸§I¤é¶ê        ;RY          ;JPY;3;          ;CMEFX     
+1;CME;SF    ;·ç­¦              ;SF          ;USD;3;          ;CMEFX     
+1;CME;SP    ;SP500             ;SP          ;USD;1;          ;CMEEQ     
+1;CME;UROM  ;¤p¼Ú¤¸            ;E7          ;USD;3;          ;CMEFX     
+1;CME;XAV   ;¤pS&P½Ã«O«ü¼Æ     ;XAV         ;USD;1;          ;CMEFX     
+1;CMX;GC    ;¶Àª÷              ;GC          ;USD;7;          ;CMXME     
+1;CMX;HG    ;»É                ;HG          ;USD;7;          ;CMXME     
+1;CMX;MGC   ;·L«¬¶Àª÷          ;MGC         ;USD;7;          ;CMXME     
+1;CMX;QO    ;°g§A¶Àª÷          ;QO          ;USD;7;          ;CMXME     
+1;CMX;SI    ;¥Õ»È              ;SI          ;USD;7;          ;CMXME     
+1;CMX;SIL   ;·L«¬¥Õ»È          ;SIL         ;USD;7;          ;CMXME     
+1;ENX;FCE   ;CAC40             ;FCH         ;EUR;1;          ;MATFCE    
+1;HKF;AAC   ;·çÁn¬ì§Þ±±ªÑ¦³­­¤½;AAC         ;HKD;5;          ;HKFSTF    
+1;HKF;CIT   ;¤¤°ê¤¤«HªÑ¥÷¦³­­¤½;CIT         ;HKD;5;          ;HKFSTF    
+1;HKF;CKH   ;ªø¦¿©M°O¹ê·~¦³­­¤½;CKH         ;HKD;5;          ;HKFSTF    
+1;HKF;COG   ;ºÑ®Û¶é±±ªÑ¦³­­¤½¥q;COG         ;HKD;5;          ;HKFSTF    
+1;HKF;CUS   ;¤H¥Á¹ô³f¹ô´Á³f    ;CUS         ;CNY;3;          ;HKFCUS    
+1;HKF;DHH   ;ùÚ¥Í°ê¥øªÑ®§ÂI«ü¼Æ;DHH         ;HKD;1;          ;HKFDH     
+1;HKF;DHS   ;ùÚ«üªÑ®§ÂI«ü¼Æ    ;DHS         ;HKD;1;          ;HKFDH     
+1;HKF;EAN   ;MSCI·s¿³¥«³õ¨È¬w²b;EAN         ;USD;1;          ;HKFMTW    
+1;HKF;EVG   ;¤¤°ê«í¤j¶°¹Î      ;EVG         ;HKD;5;          ;HKFSTF    
+1;HKF;GDU   ;¬ü¤¸¶Àª÷          ;GDU         ;USD;7;          ;HKFGDU    
+1;HKF;GLX   ;»Èªe®T¼Ö¶°¹Î¦³­­¤½;GLX         ;HKD;5;          ;HKFSTF    
+1;HKF;HCEI  ;HªÑ´Á«ü           ;HHI         ;HKD;1;          ;HKF       
+1;HKF;HKB   ;¶×Â×±±ªÑ¦³­­¤½¥q  ;HKB         ;HKD;5;          ;HKFSTF    
+1;HKF;HMCE  ;MI«¬HªÑ           ;MCH         ;HKD;1;          ;HKF       
+1;HKF;HMH   ;MI«í«ü            ;MHI         ;HKD;1;          ;HKF       
+1;HKF;HSI   ;«í«ü              ;HSI         ;HKD;1;          ;HKF       
+1;HKF;HTI   ;«í¥Í¬ì§Þ«ü¼Æ      ;HTI         ;HKD;1;          ;HKF       
+1;HKF;MCA   ;MSCI¤¤°êA50¤¬Áp¤¬³;MCA         ;USD;1;          ;HKFMCA    
+1;HKF;MCN   ;MSCI¤¤°ê¦Û¥Ñ²bÁ`¦^;MCN         ;USD;1;          ;HKFMTW    
+1;HKF;MTW   ;MSCI¥xÆW«ü¼Æ      ;MSCI¥xÆW«ü¼Æ;USD;1;          ;HKFTW     
+1;HKF;MWN   ;MSCI¥xÆW²bÁ`¦^³ø«ü;MWN         ;USD;1;          ;HKFMTW    
+1;HKF;SAN   ;ª÷¨F¤¤°ê¦³­­¤½¥q  ;SAN         ;HKD;5;          ;HKFSTF    
+1;HKF;SNO   ;µÏ¦t¥ú¾Ç¬ì§Þ¦³­­¤½;SNO         ;HKD;5;          ;HKFSTF    
+1;HKF;SOA   ;¤¤°ê«n¤è¯èªÅªÑ¥÷¦³;SOA         ;HKD;5;          ;HKFSTF    
+1;HKF;SWA   ;¤Ó¥jªÑ¥÷¦³­­¤½¥q'A;SWA         ;HKD;5;          ;HKFSTF    
+1;HKF;TCH   ;ÄË°T±±ªÑ¦³­­¤½¥q  ;TCH         ;HKD;5;          ;HKFSTF    
+1;ISG;BM    ;°g§A¥¬Äõ¯S­ìªo    ;MBC         ;USD;8;          ;ISGEN     
+1;ISG;SDX   ;°g§A¬ü¤¸«ü¼Æ      ;SDX         ;USD;1;          ;ISGDX     
+1;ISG;TM    ;°g§A¼w¦{­ìªo      ;MWC         ;USD;8;          ;ISGEN     
+1;IUK;B     ;¥¬­Û¯S­ìªo        ;LCO         ;USD;8;          ;LIFTF     
+1;IUK;FFI   ;­^°ê«ü¼Æ          ;FFI         ;GBP;1;          ;LIFFFI    
+1;IUK;FLG   ;­^°êªø¶Å          ;FLG         ;GBP;4;          ;LIFFLG    
+1;IUK;G     ;»s¨Tªo            ;G           ;USD;8;          ;LIFTF     
+1;IUS;CC    ;¥i¥i¨§            ;CC          ;USD;6;          ;CSCCC     
+1;IUS;CT    ;´Öªá              ;CT          ;USD;6;          ;NYCCT     
+1;IUS;DX    ;¬ü¤¸«ü            ;DX          ;USD;1;          ;NYCDX     
+1;IUS;FNG   ;FANG+«ü¼Æ         ;FNG         ;USD;1;          ;LIFMFS    
+1;IUS;FNG1  ;FANG+«ü¼Æ         ;FNG         ;USD;1;          ;LIFMFS    
+1;IUS;KC    ;©@°Ø              ;KC          ;USD;6;          ;CSCKC     
+1;IUS;MFS   ;¤p«¬¼Ú¿D»·ªF«ü¼Æ  ;MFS         ;USD;1;          ;LIFMFS    
+1;IUS;MME   ;¤p«¬·s¿³¥«³õ«ü¼Æ  ;MME         ;USD;1;          ;LIFMFS    
+1;IUS;OJ    ;­á¾ï¥Ä            ;OJ          ;USD;6;          ;NYCOJ     
+1;IUS;SB    ;11¸¹¿}            ;SB          ;USD;6;          ;CSCSB     
+1;IUS;YG    ;°g§A¶Àª÷          ;YG          ;USD;7;          ;CBTME     
+1;IUS;YI    ;°g§A¥Õ»È          ;YI          ;USD;7;          ;CBTME     
+1;IUS;ZG    ;¶Àª÷              ;ZG          ;USD;7;          ;CBTME     
+1;IUS;ZI    ;¥Õ»È              ;ZI          ;USD;7;          ;CBTME     
+1;JPX;JAM   ;¤p¶Àª÷            ;JAM         ;JPY;7;          ;TCE       
+1;JPX;JAS   ;IOM¶À¨§           ;JAS         ;JPY;6;          ;TCE       
+1;JPX;JAU   ;¶Àª÷              ;JAU         ;JPY;7;          ;TCE       
+1;JPX;JCR   ;¥É¦Ì              ;JCR         ;JPY;6;          ;TCE       
+1;JPX;JGB   ;¤é¥»10¦~¤½¶Å      ;JGB         ;JPY;4;          ;OSEIR     
+1;JPX;JMI   ;ªFÃÒ³Ð·~«ü¼Æ      ;JMI         ;JPY;1;          ;OSE       
+1;JPX;JNI   ;¤j¤é¸g225         ;JNI         ;JPY;1;          ;OSE       
+1;JPX;JNM   ;¤p¤é¸g225         ;JNM         ;JPY;1;          ;OSE       
+1;JPX;JPA   ;Üjª÷              ;JPA         ;JPY;7;          ;TCE       
+1;JPX;JPL   ;¥Õª÷              ;JPL         ;JPY;7;          ;TCE       
+1;JPX;JPM   ;¤p¥Õª÷            ;JPLm        ;JPY;7;          ;TCE       
+1;JPX;JRB   ;¬õ¤p¨§            ;JRB         ;JPY;6;          ;TCE       
+1;JPX;JRU   ;¾ó½¦              ;JRU         ;JPY;6;          ;TCEJRU    
+1;JPX;JSV   ;¥Õ»È              ;JSV         ;JPY;7;          ;TCE       
+1;JPX;JTI   ;ªFÃÒ«ü¼Æ          ;JTI         ;JPY;1;          ;OSE       
+1;JPX;JTM   ;¤pªFÃÒ«ü¼Æ        ;JTM         ;JPY;1;          ;OSE       
+1;NYM;BZ    ;CME ¥¬­Û¯S­ìªo    ;BZ          ;USD;8;          ;NYMEN     
+1;NYM;CL    ;»´­ìªo            ;CL          ;USD;8;          ;NYMEN     
+1;NYM;HO    ;¼ö¿Uªo            ;HO          ;USD;8;          ;NYMEN     
+1;NYM;NG    ;¤ÑµM®ð            ;NG          ;USD;8;          ;NYMEN     
+1;NYM;PA    ;Üj                ;PA          ;USD;7;          ;CMXME     
+1;NYM;PL    ;¥Õª÷              ;PL          ;USD;7;          ;CMXME     
+1;NYM;QM    ;°g§A»´­ìªo        ;QM          ;USD;8;          ;NYMEN     
+1;NYM;RB    ;µL¹]¨Tªo          ;RB          ;USD;8;          ;NYMEN     
+1;OSE;JGB   ;¤é¥»10¦~¤½¶Å      ;JGB         ;JPY;4;          ;OSEIR     
+1;OSE;JNI   ;¤j¤é¸g            ;JNI         ;JPY;1;          ;OSE       
+1;OSE;JNM   ;¤p¤é¸g            ;JNM         ;JPY;1;          ;OSE       
+1;SMX;CN    ;¤¤°êA50           ;SCN         ;USD;1;          ;SMXCN     
+1;SMX;FCH   ;¤¤°êH50           ;FCH         ;USD;1;          ;SMXCN     
+1;SMX;FID   ;´I®É¦L¥§«ü¼Æ      ;FID         ;USD;1;          ;SMXID     
+1;SMX;FVN   ;¶V«n30«ü¼Æ        ;FVN         ;USD;1;          ;SMXFVN    
+1;SMX;ID    ;¦L¥§«ü¼Æ          ;SID         ;USD;1;          ;SMXID     
+1;SMX;IN    ;¦L«×«ü¼Æ          ;SIN         ;USD;1;          ;SMXIN     
+1;SMX;IU    ;¦L«×¿c¤ñ´Á³f      ;SIU         ;USD;3;          ;SMXIU     
+1;SMX;NCH   ;¤¤°ê¦Û¥ÑNTR«ü¼Æ   ;NCH         ;USD;1;          ;SMXNCH    
+1;SMX;NK    ;¼¯®Ú¤é¸g«ü        ;SSI         ;JPY;1;          ;SMXNK     
+1;SMX;SG    ;·s¥[©Y«ü          ;SSG         ;SGD;1;          ;SMXSG     
+1;SMX;STF   ;TSR20 ¾ó½¦        ;STF         ;USD;6;          ;SMXSTF    
+1;SMX;TW    ;¼¯¥x«ü            ;STW         ;USD;1;          ;SMXTW     
+1;SMX;TWN   ;´I®É¥xÆW«ü¼Æ      ;TWN         ;USD;1;          ;SMXTW     
+1;SMX;UC    ;¤H¥Á¹ô´Á³f        ;UC          ;CNY;3;          ;SMXUC     
+1;TCE;JAM   ;ªF¤u¤p¶Àª÷        ;JAM         ;JPY;7;          ;TCE       
+1;TCE;JAU   ;ªF¤u¶Àª÷          ;JAU         ;JPY;7;          ;TCE       
+1;TCE;JCO   ;­ìªo              ;JCO         ;JPY;8;          ;TCE       
+1;TCE;JGL   ;¨Tªo              ;JGL         ;JPY;8;          ;TCE       
+1;TCE;JKE   ;¿Uªo              ;JKE         ;JPY;8;          ;TCE       
+1;TCE;JPA   ;Üjª÷              ;JPA         ;JPY;7;          ;TCE       
+1;TCE;JPL   ;¥Õª÷              ;JPL         ;JPY;7;          ;TCE       
+1;TCE;JPM   ;¤p¥Õª÷            ;JPLm        ;JPY;7;          ;TCE       
+1;TCE;JRU   ;¾ó½¦              ;JRU         ;JPY; ;          ;TCEJRU    
+1;TCE;JSV   ;¥Õ»È              ;JSV         ;JPY;7;          ;TCE       
+1;TGE;JAS   ;IOM¶À¨§           ;JAS         ;JPY;6;          ;TCE       
+1;TGE;JCR   ;¥É¦Ì              ;JCR         ;JPY;6;          ;TCE       
+1;TGE;JRB   ;¤p¨§              ;JRB         ;JPY;6;          ;TCE       
+1;TGE;JSG   ;¤é¥»²Ê¿}          ;JSG         ;JPY;6;          ;TCE       
+1;TSE;JMI   ;ªFÃÒ³Ð·~«ü¼Æ      ;JMI         ;JPY;1;          ;OSE       
+1;TSE;JTI   ;ªFÃÒ«ü¼Æ          ;JTI         ;JPY;1;          ;OSE       
+1;TSE;JTM   ;¤pªFÃÒ«ü¼Æ        ;JTM         ;JPY;1;          ;OSE       
+1;URX;FDX   ;¼w°ê«ü¼Æ          ;DAX         ;EUR;1;          ;URX       
+1;URX;FDXM  ;°g§AªkÄõ§JºÖ«ü¼Æ  ;FDXM        ;EUR;1;          ;URX       
+1;URX;FESB  ;¼Ú¬w¹DÃ£»È¦æ«ü¼Æ  ;FESB        ;EUR;1;          ;URXEQ     
+1;URX;FGBL  ;¼Ú¤¸10¦~¶Å        ;FGBL        ;EUR;4;          ;URX       
+1;URX;FGBM  ;¼Ú¤¸5¦~¶Å         ;FGBM        ;EUR;4;          ;URX       
+1;URX;FGBS  ;¼Ú¤¸2¦~¶Å         ;FGBS        ;EUR;4;          ;URX       
+1;URX;FGBX  ;¼Ú¤¸30¦~¶Å        ;FGBX        ;EUR;4;          ;URX       
+1;URX;FMCH  ;¤¤°ê«ü¼Æ          ;FMCH        ;USD;1;          ;URX       
+1;URX;FMCN  ;¤¤°ê¦Û¥Ñ«ü¼Æ      ;FMCN        ;USD;1;          ;URX       
+1;URX;FOAT  ;ªk°ê¤½¶Å          ;FOAT        ;EUR;4;          ;URXIR2    
+1;URX;FSMI  ;·ç¤hÄ¬¾¤¥@«ü¼Æ    ;SMI         ;CHF;1;          ;URXEQ     
+1;URX;FSTB  ;¼Ú¬w600»È¦æ«ü¼Æ   ;FSTB        ;EUR;1;          ;URXEQ     
+1;URX;FVS   ;ÂÅÄw50ªi°Ê²v«ü¼Æ  ;FVS         ;EUR;1;          ;URXEQ     
+1;URX;FXXP  ;ªx¼Ú600«ü¼Æ       ;FXXP        ;EUR;1;          ;URXEQ     
+1;URX;STXE  ;ÂÅÄw«ü¼Æ          ;FESX        ;EUR;1;          ;URX       
+2;CBT;C     ;¥É¦Ì              ;C           ;USD;6;1CBTC     ;CBTAG     
+2;CBT;S     ;¶À¨§              ;S           ;USD;6;1CBTS     ;CBTAG     
+2;CBT;TY    ;10¦~¶Å¿ï¾ÜÅv      ;TY          ;USD;4;1CBTTY    ;CBTIR     
+2;CBT;US    ;30¦~¬ü°ê¬F©²¶Å¨é  ;US          ;USD;4;1CBTUS    ;CBTIR     
+2;CBT;W     ;¤p³Á              ;W           ;USD;6;1CBTW     ;CBTAG     
+2;CBT;YM    ;5BucksDowOption   ;YM          ;USD;1;1CBTYM    ;CMEEI     
+2;CME;AD    ;¿D¹ô              ;AD          ;USD;3;1CMEAD    ;CMEFX     
+2;CME;BP    ;­^Âé              ;BP          ;USD;3;1CMEBP    ;CMEFX     
+2;CME;CD    ;¥[¹ô              ;CD          ;USD;3;1CMECD    ;CMEFX     
+2;CME;EC    ;¼Ú¤¸              ;EC          ;USD;3;1CMEEC    ;CMEFX     
+2;CME;ES    ;MiNi S&P500 ªÑ»ù«ü;ES          ;USD;1;1CMEES    ;CMEEI     
+2;CME;EW    ;Mini S&P¤ë©³¿ï¾ÜÅv;EWE         ;USD;1;1CMEES    ;CMEEI     
+2;CME;EW1   ;Mini S&P¶g¿ï¾ÜÅvW1;EW1         ;USD;1;1CMEES    ;CMEEI     
+2;CME;EW2   ;Mini S&P¶g¿ï¾ÜÅvW2;EW2         ;USD;1;1CMEES    ;CMEEI     
+2;CME;EW3   ;Mini S&P¶g¿ï¾ÜÅvW3;EW3         ;USD;1;1CMEES    ;CMEEI     
+2;CME;EW4   ;Mini S&P¶g¿ï¾ÜÅvW4;EW4         ;USD;1;1CMEES    ;CMEEI     
+2;CME;EX    ;E-Micro ¤pS&P¤ë©³¿;EX          ;USD;1;1CMEMES   ;CMEEI     
+2;CME;EX2   ;E-Micro¤pS&P¶g¿ï¾Ü;EX2         ;USD;1;1CMEMES   ;CMEEI     
+2;CME;EX3   ;E-Micro¤pS&P¶g¿ï¾Ü;EX3         ;USD;1;1CMEMES   ;CMEEI     
+2;CME;EX4   ;E-Micro¤pS&P¶g¿ï¾Ü;EX4         ;USD;1;1CMEMES   ;CMEEI     
+2;CME;JY    ;¤é¤¸              ;JY          ;USD;3;1CMEJY    ;CMEFX     
+2;CME;MES   ;E-Micro ¤pS&P     ;MES         ;USD;1;1CMEMES   ;CMEEI     
+2;CME;MNQ   ;E-Micro ¤pNQ      ;MNQ         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;MQ1   ;E-Micro ¤pNQ¶g¿ï  ;MQ1         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;MQ2   ;E-Micro ¤pNQ¶g¿ï  ;MQ2         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;MQ3   ;E-Micro ¤pNQ¶g¿ï  ;MQ3         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;MQ4   ;E-Micro ¤pNQ¶g¿ï  ;MQ4         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;MQE   ;E-Micro ¤pNQ¤ë©³¿ï;MQE         ;USD;1;1CMEMNQ   ;CMEEI     
+2;CME;NQ    ;¤pND              ;NQ          ;USD;1;1CMENQ    ;CMEEI     
+2;CME;QNE   ;¤pND¤ë©³¿ï¾ÜÅv    ;QNE         ;USD;1;1CMENQ    ;CMEEI     
+2;CMX;GC    ;¶Àª÷¿ï¾ÜÅv        ;GC Option   ;USD;7;1CMXGC    ;CMXME     
+2;CMX;SI    ;¥Õ»È              ;            ;USD;7;1CMXSI    ;CMXME     
+2;HKF;HCEI  ;HªÑ´Á¿ï           ;HCEI OPTS   ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HOW1  ;HªÑ´Á¶g¿ïW1       ;HOW1        ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HOW2  ;HªÑ´Á¶g¿ïW2       ;HOW2        ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HOW3  ;HªÑ´Á¶g¿ïW3       ;HOW3        ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HOW4  ;HªÑ´Á¶g¿ïW4       ;HOW4        ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HOW5  ;HªÑ´Á¶g¿ïW5       ;HOW5        ;HKD;1;1HKFHCEI  ;HKF       
+2;HKF;HSI   ;«í¥Í´Á¿ï          ;HSI OPTS    ;HKD;1;1HKFHSI   ;HKF       
+2;HKF;SOW1  ;«í¥Í´Á¶g¿ïW1      ;SOW1        ;HKD;1;1HKFHSI   ;HKF       
+2;HKF;SOW2  ;«í¥Í´Á¶g¿ïW2      ;SOW2        ;HKD;1;1HKFHSI   ;HKF       
+2;HKF;SOW3  ;«í¥Í´Á¶g¿ïW3      ;SOW3        ;HKD;1;1HKFHSI   ;HKF       
+2;HKF;SOW4  ;«í¥Í´Á¶g¿ïW4      ;SOW4        ;HKD;1;1HKFHSI   ;HKF       
+2;HKF;SOW5  ;«í¥Í´Á¶g¿ïW5      ;SOW5        ;HKD;1;1HKFHSI   ;HKF       
+2;JPX;JNI   ;¤é¸g225¿ï¾ÜÅv     ;JNI         ;JPY;1;1JPXJNI   ;OSE       
+2;JPX;JTI   ;ªFÃÒ«ü¼Æ¿ï¾ÜÅv    ;JTI         ;JPY;1;1JPXJTI   ;OSE       
+2;NYM;CL    ;»´­ìªo            ;CL          ;USD;8;1NYMCL    ;NYMEN     
+2;OSE;JNI   ;¤j¨Á¤é¸g225¿ï¾ÜÅv ;JNI         ;JPY;1;1OSEJNI   ;OSE       
+2;SMX;NK    ;¤é¸g«ü¼Æ          ;            ;JPY;1;1SMXNK    ;SMXNK     
+2;TSE;JTI   ;ªFÃÒ«ü¼Æ¿ï¾ÜÅv    ;JTI         ;JPY;1;1TSEJTI   ;OSE       
