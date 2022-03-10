@@ -1,0 +1,54 @@
+set nocompatible
+filetype off
+
+set rtp+=~/.vim/bundle/Vundle.vim
+call vundle#begin()
+
+Plugin 'VundleVim/Vundle.vim'
+Plugin 'tpope/vim-fugitive'
+Plugin 'rking/ag.vim'
+Plugin 'junegunn/fzf'
+Plugin 'junegunn/fzf.vim'
+Plugin 'scrooloose/syntastic'
+Plugin 'itchyny/lightline.vim'
+
+call vundle#end()            " required
+filetype plugin indent on    " required
+
+set number
+set expandtab
+set nowrap
+set tabstop=4
+set shiftwidth=4
+set cursorline
+set autoindent
+set cindent
+hi CursorLine   cterm=underline
+hi Cursor ctermbg=yellow ctermfg=black
+hi Visual ctermbg=blue ctermfg=black
+set hlsearch
+hi Search ctermbg=White
+hi Search ctermfg=Black
+hi Comment ctermfg=grey
+
+map <F4> :execute "vimgrep /" . expand("<cword>") . "/j **/*.c **/*.py **/*.go **/*.hpp **/*.cpp **/*.h" <Bar> cw<CR>
+nnoremap ff :FZF<CR>
+nnoremap fa :Ag 
+nnoremap J, :e ~/.vimrc<CR>
+
+set laststatus=2
+if !has('gui_running')
+  set t_Co=256
+endif
+set noshowmode
+let g:lightline = {
+      \ 'colorscheme': 'wombat',
+      \ 'active': {
+      \   'left': [ [ 'mode', 'paste' ],
+      \             [ 'gitbranch', 'readonly', 'filename', 'modified' ] ]
+      \ },
+      \ 'component_function': {
+      \   'gitbranch': 'FugitiveHead'
+      \ },
+      \ }
+
