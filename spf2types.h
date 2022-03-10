@@ -1,7 +1,7 @@
 #ifndef __VIP2_TYPES_H__
 #define __VIP2_TYPES_H__
 
-#pragma pck(1)
+#pragma pack(1)
 
 struct m2_head {
     char begin;   //0xff

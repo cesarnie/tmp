@@ -14,6 +14,7 @@
 #include <time.h>
 #include <map>
 #include <vector>
+#include <string>
 
 #include "log.h"
 #include "ringbuffer.h"
@@ -849,10 +850,10 @@ int mdc_read_stdin(FILE* fp, ringbuf_t* ring) {
         return -1;
     }
     size_t writecnt = ring_write(inputbuf, readcnt, ring);
-    if ((int)writecnt < readcnt) {
+    if (writecnt < readcnt) {
         Logf("err: ring buffer full on write");
     }
-    return writecnt;
+    return (int)writecnt;
 }
 
 // returns -1 if error, in this case, we should try to reconnect
