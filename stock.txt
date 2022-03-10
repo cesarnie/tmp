@@ -1,0 +1,2 @@
+SMX;現貨;TWNIDX;富時台灣指數現貨.TWNIDX;TWN
+SMX;現貨;CNIDX;中國A50現貨.CNIDX;CN
