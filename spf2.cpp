@@ -1,0 +1,2201 @@
+#include <unistd.h>
+#include <stdio.h>
+#include <getopt.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <stdlib.h>
+#include <arpa/inet.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <signal.h>
+#include <zmq.h>
+#include <time.h>
+#include <map>
+#include <vector>
+
+#include "log.h"
+#include "ringbuffer.h"
+#include "spf2types.h"
+#include "spf2shm.h"
+#include "tools.h"
+#include "vip20.h"
+#include "fmtjson.h"
+#include "spf2.h"
+
+#define SPF2_VER "0.0.1"
+#define MAX_URL_LEN 256
+
+#define si2midx(x) ((x) - (gsm->symbols))
+#define sr2midx(x) ((x) - (gsm->roots))
+#define IS_SPOT(x) ((x) == (0x20))
+#define IS_STOCK(x) ((x) == (0x20))
+#define IS_WARRANT(x) ((x) == (0x21))
+#define IS_INDEX(x) ((x) == (0x10))
+#define IS_FUTURE(x) (((x)&0x30) == 0x30)
+#define IS_OPTION(x) (((x)&0x40) == 0x40)
+#define IS_SPREAD(x) ((x)&0x04)
+#define fchanged(p, mask) ((((*((uint8_t*)p->exist_fg)) & (mask)) == (mask)) && (((*((uint8_t*)p->update_fg)) & (mask)) == (mask)))
+#define fexist(p, mask) (((*((uint8_t*)p->exist_fg)) & (mask)) == (mask))
+#define TRADE_CLEAR 0
+#define TRADE_OPEN 2
+#define TRADE_CLOSE 7
+
+FILE* g_outfp = NULL;
+void* g_zmqctx = NULL;
+int g_mdc_sock = -1;
+void* g_zout1 = NULL;
+void* g_zout2 = NULL;
+int g_log_rotate_days = 3;
+int gSleepKB = 0;
+int gRefreshInterval = 300000000;
+int g_plain = 0;
+char g_outurl1[MAX_URL_LEN];
+char g_outurl2[MAX_URL_LEN];
+char g_sysname[MAX_URL_LEN];
+char g_account[MAX_URL_LEN];
+char g_pwd[MAX_URL_LEN];
+char g_mdc_addr[MAX_URL_LEN];
+char gFtpPath[200];
+char g_cfg_fn[MAX_URL_LEN];
+FILE* g_sav_fh = NULL;
+FILE* g_in_fh = NULL;
+simap_t g_simap; // index for symbols
+simap_t g_srmap; // index for symbol group
+simap_t g_subtbl;                                     // key=exchage;symbolroot;month;type
+s2smap_t g_THostMap;                                  //key: CME;CL.2103   value: CL.2103
+simap_t g_THostSet;                                   //key: CME;S.2010    value: 0: no symbol received, 1: received symbol, value is a future as T Host
+simap_t gSymbol2CategoryMap;                          // category is Sinopac specific classification
+s2spairmap_t g_fut_to_spot_map;                       // key="SMX;TWN", value=spot symbol/name pair
+std::map<std::string, struct MonthsTable*> gMonTable; //key:"o;CMX;AABC", source:GWHSTM.TXT , first item: o/f
+simap_t gCurrMonthMap;                                // key is "exchange;commodity root", source: GWHSTM.TXT
+simap_t gFarMonthMap;
+std::vector<std::string> gExchanges;
+char g_ibuf[MDC_MAX_SZ];
+s2smap_t gAlterCommrootMap;
+
+static unsigned long dec_tbl[] = {
+    1,
+    10,
+    100,
+    1000,
+    10000,
+    100000,
+    1000000,
+    10000000,
+    100000000,
+    1000000000,
+    10000000000,
+    100000000000,
+    1000000000000
+};
+
+static double fdec_tbl[] = {
+    1.,
+    10.,
+    100.,
+    1000.,
+    10000.,
+    100000.,
+    1000000.,
+    10000000.,
+    100000000.,
+    1000000000.,
+    10000000000.,
+    100000000000.,
+    1000000000000.
+};
+
+void mdc_close(int mdc_sock) {
+    close(mdc_sock);
+    Logf("disconnect mdc socket");
+}
+
+void destroy_app() {
+    if (g_mdc_sock != -1) {
+        mdc_close(g_mdc_sock);
+        g_mdc_sock = -1;
+    }
+    if (g_zout1) {
+        zmq_close(g_zout1);
+        g_zout1 = NULL;
+    }
+    if (g_zout2) {
+        zmq_close(g_zout2);
+        g_zout2 = NULL;
+    }
+    if (g_zmqctx) {
+        zmq_ctx_destroy(g_zmqctx);
+        g_zmqctx = NULL;
+    }
+    if (g_sav_fh) {
+        fclose(g_sav_fh);
+        g_sav_fh = NULL;
+    }
+    spf2shm_destroy();
+}
+
+int isSubscribed(struct SymbolInfo* si) {
+    char key[128];
+    char abbr[64];
+    sprintf(abbr, "%s", si->root);
+    char commtype = 's';
+    if (IS_FUTURE(si->type_fg)) {
+        commtype = 'f';
+    }
+    else if (IS_OPTION(si->type_fg)) {
+        commtype = 'o';
+    }
+    sprintf(key, "%s;%s;%c", si->exchange, abbr, commtype);
+    //if (0) {
+    //    std::map<std::string, int>::iterator excluiter = gExcludeSymbols.find(key);
+    //    if (excluiter != gExcludeSymbols.end()) {
+    //        return 0;
+    //    }
+    //}
+    //bm
+    if (IS_SPREAD(si->extra_fg)) {
+        char* tok;
+        char fullsymb[64];
+        strcpy(fullsymb, si->symbol);
+        char symb[12];
+        char mon1[8];
+        char mon2[8];
+        tok = strtok(fullsymb, ".");
+        if (tok != NULL) {
+            strcpy(symb, tok);
+        }
+        else {
+            return 0;
+        }
+        tok = strtok(NULL, "/");
+        if (tok != NULL) {
+            strcpy(mon1, tok);
+        }
+        else {
+            return 0;
+        }
+        tok = strtok(NULL, "/");
+        if (tok != NULL) {
+            strcpy(mon2, tok);
+        }
+        else {
+            return 0;
+        }
+
+        char leg[128];
+        sprintf(leg, "%s;%s;20%s;f", si->exchange, abbr, mon1);
+        simap_t::iterator finditer = g_subtbl.find(leg);
+        if (finditer == g_subtbl.end()) {
+            return 0;
+        }
+        sprintf(leg, "%s;%s;20%s;f", si->exchange, abbr, mon2);
+        finditer = g_subtbl.find(leg);
+        if (finditer == g_subtbl.end()) {
+            return 0;
+        }
+    }
+    else if (IS_FUTURE(si->type_fg)) {
+        sprintf(key, "%s;%s;%d;f", si->exchange, abbr, si->duemon);
+        simap_t::iterator finditer = g_subtbl.find(key);
+        if (finditer == g_subtbl.end()) {
+            return 0;
+        }
+    }
+    else if (IS_OPTION(si->type_fg)) {
+        sprintf(key, "%s;%s;%d;o", si->exchange, abbr, si->duemon);
+        simap_t::iterator finditer = g_subtbl.find(key);
+        if (finditer == g_subtbl.end()) {
+            return 0;
+        }
+    }
+    else if (IS_INDEX(si->type_fg)) {
+        sprintf(key, "%s;%s;%d;s", si->exchange, abbr, 999999);
+        simap_t::iterator finditer = g_subtbl.find(key);
+        if (finditer == g_subtbl.end()) {
+            return 0;
+        }
+    }
+    else {
+        return 0;
+    }
+    return 1;
+}
+
+// exchgcomm : "o;CMX;AABC"
+void addMonsTableYMEntry(const char* exchgcomm, int yyyymm) {
+    std::map<std::string, struct MonthsTable*>::iterator iter = gMonTable.find(exchgcomm);
+    if (iter != gMonTable.end()) {
+        if (iter->second->count >= 20) {
+            return;
+        }
+        iter->second->mons[iter->second->count] = yyyymm;
+        iter->second->count += 1;
+    }
+    else {
+        MonthsTable* item = new MonthsTable;
+        memset(item->mons, 0x00, sizeof(int) * 20);
+        item->mons[0] = yyyymm;
+        item->count = 1;
+        gMonTable[exchgcomm] = item;
+    }
+}
+
+// commroot : "f/o;CMX;AABC"
+MonthsTable* getMonthsTableEntry(const char* commroot) {
+    std::map<std::string, MonthsTable*>::iterator iter = gMonTable.find(commroot);
+    if (iter != gMonTable.end()) {
+        return iter->second;
+    }
+    return NULL;
+}
+
+void addCurrentMonthEntry(const char* exchgcomm, int deliveryYM) {
+    simap_t::iterator fiter = gCurrMonthMap.find(exchgcomm);
+    if (fiter == gCurrMonthMap.end()) {
+        gCurrMonthMap[exchgcomm] = deliveryYM;
+    }
+    else {
+        if (deliveryYM < fiter->second) {
+            gCurrMonthMap[exchgcomm] = deliveryYM;
+        }
+    }
+}
+
+void LoadMonthTable(char sectype, const char* fn) {
+    FILE* pf = fopen(fn, "rt");
+    if (pf == NULL) {
+        LogErr("cannot open file %s", fn);
+        exit(1);
+    }
+
+    char todaystr[64];
+    time_t nowt = time(NULL);
+    struct tm ltime = *localtime(&nowt);
+    sprintf(todaystr, "%04d%02d%02d", ltime.tm_year + 1900, ltime.tm_mon + 1, ltime.tm_mday);
+
+    char linebuf[200];
+    char exchgbuf[20];
+    char commrootbuf[64];
+    char deliveryYM[64];
+    char lastTradeDate[64];
+    while (fgets(linebuf, 200, pf) != NULL) {
+        size_t linesz = strlen(linebuf);
+        if (linesz > 0 && linebuf[0] == '#') {
+            continue;
+        }
+        if (linebuf[linesz - 1] == '\n') {
+            linebuf[linesz - 1] = '\0';
+        }
+        char* tok;
+        tok = strtok(linebuf, ";");
+        if (tok != NULL) {
+            strcpy(exchgbuf, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(commrootbuf, tok);
+            ctrim(commrootbuf);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(deliveryYM, tok);
+            ctrim(deliveryYM);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok == NULL) {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok == NULL) {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok == NULL) {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(lastTradeDate, tok);
+            ctrim(lastTradeDate);
+            if (strcmp(todaystr, lastTradeDate) > 0) {
+                continue;
+            }
+        }
+        else {
+            continue;
+        }
+        char tmpOptMapFut[64];       //1HKFHCEI
+        char optMapFut[32];          //HCEI, symbol root
+        char optMapFutDueMonStr[64]; //202108
+        tmpOptMapFut[0] = 0;
+        optMapFut[0] = 0;
+        optMapFutDueMonStr[0] = 0;
+        if (sectype == 'o') {
+            tok = strtok(NULL, ";");
+            if (tok == NULL) {
+                continue;
+            }
+            tok = strtok(NULL, ";");
+            if (tok == NULL) {
+                continue;
+            }
+            else {
+                strcpy(tmpOptMapFut, tok);
+                ctrim(tmpOptMapFut);
+                int tmpOptMapFutLen = strlen(tmpOptMapFut);
+                strncpy(optMapFut, tmpOptMapFut + 4, tmpOptMapFutLen - 4);
+                optMapFut[tmpOptMapFutLen - 4] = 0;
+            }
+            tok = strtok(NULL, ";");
+            if (tok == NULL) {
+                continue;
+            }
+            else {
+                strcpy(optMapFutDueMonStr, tok);
+                ctrim(optMapFutDueMonStr);
+            }
+        }
+        char typecommroot[200];
+        sprintf(typecommroot, "%c;%s;%s", sectype, exchgbuf, commrootbuf);
+        int deliveryYMInt = atoi(deliveryYM);
+        addMonsTableYMEntry(typecommroot, deliveryYMInt);
+        char commroot[100];
+        sprintf(commroot, "%s;%s", exchgbuf, commrootbuf);
+        if (sectype == 'f') {
+            addCurrentMonthEntry(commroot, deliveryYMInt);
+        }
+        else if (sectype == 'o') {
+            char thoststr[64];
+            sprintf(thoststr, "%s.%s", optMapFut, optMapFutDueMonStr + 2);
+            char thostkey[128];
+            sprintf(thostkey, "%s.%d", commroot, deliveryYMInt % 10000);
+            g_THostMap[thostkey] = thoststr;
+            char tmpbuf2[100];
+            sprintf(tmpbuf2, "%s;%s", exchgbuf, thoststr);
+            g_THostSet[tmpbuf2] = 0;
+            Logf("default T host for %s is %s", thostkey, tmpbuf2);
+        }
+    }
+    fclose(pf);
+}
+
+void LoadSpotTxt(const char* fn) {
+    FILE* pf = fopen(fn, "rt");
+    if (pf == NULL) {
+        LogErr("cannot open %s", fn);
+        return;
+    }
+
+    char linebuf[256];
+    struct SpotItem rec;
+    while (fgets(linebuf, 256, pf) != NULL) {
+        ctrim(linebuf);
+        char* tok;
+        tok = strtok(linebuf, ";");
+        if (tok != NULL) {
+            ctrim(tok);
+            strcpy(rec.exchange, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            ctrim(tok);
+            strcpy(rec.cls, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            ctrim(tok);
+            strcpy(rec.symbol, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            ctrim(tok);
+            strcpy(rec.name, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            ctrim(tok);
+            strcpy(rec.future, tok);
+        }
+        else {
+            continue;
+        }
+
+        //struct SpotItem * insertRec = (struct SpotItem*)malloc(sizeof(struct SpotItem));
+        //memcpy(insertRec, &rec, sizeof(struct SpotItem));
+        //spot_vec.push_back(insertRec);
+
+        struct StringPair spair;
+        spair.str1 = rec.symbol; // symbol code of spot
+        spair.str2 = rec.name;   // symbol name of spot
+        char keybuf[64];
+        sprintf(keybuf, "%s;%s", rec.exchange, rec.future);
+        g_fut_to_spot_map[keybuf] = spair;
+        Logf("add g_fut_to_spot_map[%s]=%s,%s", keybuf, spair.str1.c_str(), spair.str2.c_str());
+
+        char subkey[128];
+        sprintf(subkey, "%s;%s;%d;s", rec.exchange, rec.symbol, 999999);
+        g_subtbl[subkey] = 1;
+    }
+    fclose(pf);
+}
+
+void LoadSubscribeTableAPEXHSTB() {
+    char fn[300];
+    sprintf(fn, "%s/APEXHSTB.TXT", gFtpPath);
+    FILE* pf = fopen(fn, "rt");
+    if (pf == NULL) {
+        fprintf(stderr, "cannot open file %s\n", fn);
+        return;
+    }
+    char sectype;
+    char linebuf[256];
+    char commtype[3];
+    char exchgbuf[64];
+    char commrootbuf[64];
+    char chtname[64];
+    char unknown1[64];
+    char currency[64];
+    char commcategory[64];
+    char alter_commroot[64];
+    char sessiontype[64];
+    while (fgets(linebuf, 256, pf) != NULL) {
+        size_t linesz = strlen(linebuf);
+        if (linesz > 0 && linebuf[0] == '#') {
+            continue;
+        }
+        if (linebuf[linesz - 1] == '\n') {
+            linebuf[linesz - 1] = '\0';
+        }
+        char* tok;
+        tok = strtok(linebuf, ";");
+        if (tok != NULL) {
+            strcpy(commtype, tok);
+            ctrim(commtype);
+            if (commtype[0]=='1') {
+                sectype = 'f';
+            }
+            else if (commtype[0]=='2') {
+                sectype = 'o';
+            }
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(exchgbuf, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(commrootbuf, tok);
+            ctrim(commrootbuf);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(chtname, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(unknown1, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(currency, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(commcategory, tok);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(alter_commroot, tok);
+            ctrim(alter_commroot); 
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, ";");
+        if (tok != NULL) {
+            strcpy(sessiontype, tok);
+            ctrim(sessiontype);
+        }
+        else {
+            continue;
+        }
+//bm
+        char exchgcomm[200];
+        char typeexchgcomm[200];
+        sprintf(exchgcomm, "%c;%s;%s", sectype, exchgbuf, commrootbuf);
+        sprintf(typeexchgcomm, "%s;%s;%s", commtype, exchgbuf, commrootbuf);
+        if (strlen(sessiontype) > 0) {
+            MonthsTable* mtbl = getMonthsTableEntry(exchgcomm);
+            if (mtbl != NULL) {
+                for (int i = 0; i < mtbl->count; ++i) {
+                    char fullsubitem[200];
+                    if (strcmp(commtype, "1") == 0) {
+                        sprintf(fullsubitem, "%s;%s;%d;f", exchgbuf, commrootbuf, mtbl->mons[i]);
+                        g_subtbl[fullsubitem] = 1;
+                    }
+                    else if (strcmp(commtype, "2") == 0) {
+                        sprintf(fullsubitem, "%s;%s;%d;o", exchgbuf, commrootbuf, mtbl->mons[i]);
+                        g_subtbl[fullsubitem] = 1;
+                    }
+                }
+            }
+        }
+        if (strlen(alter_commroot) > 0) {
+            char commtype2 = (commtype[0] == '1') ? 'f' : 'o';
+            char typeexchgcomm2[200];
+            sprintf(typeexchgcomm2, "%s;%s;%c", exchgbuf, commrootbuf, commtype2);
+            gAlterCommrootMap[typeexchgcomm2] = alter_commroot + 4;
+        }
+        gSymbol2CategoryMap[typeexchgcomm] = atol(commcategory);
+    }
+    fclose(pf);
+}
+
+//bm
+int ConvertToApxTradeSessionStatus(int state) {
+    switch (state) {
+    case 2:
+        return TRADE_CLEAR;
+    case 3:
+        return TRADE_OPEN;
+    case 4:
+        return TRADE_CLOSE;
+    }
+    return TRADE_OPEN;
+}
+
+void sigint_handler(int sig) {
+    signal(SIGINT, SIG_DFL);
+    Logf("catch SIGINT");
+    destroy_app();
+    exit(0);
+}
+
+void print_version() {
+    fprintf(stderr, "spf2 %s\n", SPF2_VER);
+}
+
+void print_help() {
+    const char* ident = "  ";
+    print_version();
+    fprintf(stderr, "%s%s\n", ident, "h --help: print help message");
+}
+
+const char* zmq_sockettype_str(int n) {
+    switch (n) {
+    case ZMQ_PAIR:
+        return "pair";
+    case ZMQ_PUB:
+        return "pub";
+    case ZMQ_SUB:
+        return "sub";
+    case ZMQ_REQ:
+        return "request";
+    case ZMQ_REP:
+        return "reply";
+    case ZMQ_DEALER:
+        return "dealer";
+    case ZMQ_ROUTER:
+        return "router";
+    case ZMQ_PULL:
+        return "pull";
+    case ZMQ_PUSH:
+        return "push";
+    case ZMQ_XPUB:
+        return "xpub";
+    case ZMQ_XSUB:
+        return "xsub";
+    case ZMQ_STREAM:
+        return "stream";
+    }
+    return "";
+}
+
+void* open_zmq_out(const char* addr, int mode, int isbind) {
+    g_zmqctx = zmq_ctx_new();
+    if (!g_zmqctx) {
+        Logf("err: cannot create zmq context");
+        return NULL;
+    }
+    void* ret = zmq_socket(g_zmqctx, mode);
+    if (!ret) {
+        Logf("error in zmq_socket: %s, mode=%d", zmq_strerror(errno), mode);
+        return NULL;
+    }
+
+    int rate = 100000000;
+    int rc = zmq_setsockopt(ret, ZMQ_RATE, &rate, sizeof(rate));
+    if (rc != 0) {
+        Logf("error in zmq_setsockopt: %s", zmq_strerror(errno));
+        zmq_close(ret);
+        return NULL;
+    }
+
+    if (isbind) {
+        rc = zmq_bind(ret, addr);
+    }
+    else {
+        rc = zmq_connect(ret, addr);
+    }
+    if (rc != 0) {
+        Logf("error in zmq_%s: %s, addr=%s", isbind ? "bind" : "connect", zmq_strerror(errno), addr);
+        zmq_close(ret);
+        return NULL;
+    }
+    Logf("zmq out socket mode=%s, %s, %s", zmq_sockettype_str(mode), isbind ? "bind" : "connect", addr);
+    return ret;
+}
+
+// returns socket open
+// if open socket error, return -1
+int mdc_open(const char* ip, const char* service) {
+    int socketRet = -1;
+    struct addrinfo hints;
+    struct addrinfo *result, *rp;
+    memset(&hints, 0x00, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = 0;
+    hints.ai_flags = 0;
+    int addRet = getaddrinfo(ip, service, &hints, &result);
+    if (addRet != 0) {
+        LogErr("getaddrinfo err: %s", gai_strerror(addRet));
+        exit(EXIT_FAILURE);
+    }
+
+    for (rp = result; rp != NULL; rp = rp->ai_next) {
+        char ipaddr[20];
+        inet_ntop(rp->ai_family, &((struct sockaddr_in*)rp->ai_addr)->sin_addr, ipaddr, 20);
+        if (1) {
+            Logf("try connection: ip=%s, port=%d", ipaddr, ntohs(((struct sockaddr_in*)rp->ai_addr)->sin_port));
+        }
+
+        socketRet = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (socketRet == -1) {
+            LogErr("socket err: family=%d, socket_type=%d, protocol=%d", rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+            continue;
+        }
+        if (connect(socketRet, rp->ai_addr, rp->ai_addrlen) == -1) {
+            close(socketRet);
+            LogErr("connect err: %d(%s)", errno, strerror(errno));
+            continue;
+        }
+        else {
+            Logf("connected to %s:%d", ipaddr, ntohs(((struct sockaddr_in*)rp->ai_addr)->sin_port));
+            break;
+        }
+    }
+    freeaddrinfo(result);
+
+    if (rp == NULL) { // No address succeeded
+        return -1;
+    }
+    return socketRet;
+}
+
+void int64_to_bcd(uint64_t data, char* buffer, int num) {
+    uint64_t c_value = (uint64_t)data;
+    int i;
+    for (i = num - 1; i >= 0; i--) {
+        uint64_t cut = c_value % 100L;
+        buffer[i] = ((cut / 10) << 4) + (cut % 10);
+        c_value = c_value / 100L;
+    }
+}
+
+int mdc_send(char* data, size_t sz) {
+    write(g_mdc_sock, data, sz);
+    if (g_sav_fh) {
+        fwrite(data, sz, 1, g_sav_fh);
+        fflush(g_sav_fh);
+    }
+    return 0;
+}
+
+int mdc_req_login(int ver, const char* sysname, const char* acc, const char* pwd) {
+    struct m2cl_login p;
+    p.head.begin = 0xff;
+    int64_to_bcd(51, p.head.fmt, sizeof(p.head.fmt));
+    int64_to_bcd(1, p.head.ver, sizeof(p.head.ver));
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    int hms = to_ymd(tp.tv_sec);
+    int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
+    int64_to_bcd(sizeof(struct m2cl_login) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
+
+    mdc_send((char*)&p, sizeof(p));
+    return 0;
+}
+
+int mdc_req_symbol(const char* exchange) {
+    struct m2cl_symbol p;
+    p.head.begin = 0xff;
+    int64_to_bcd(52, p.head.fmt, 1);
+    int64_to_bcd(1, p.head.ver, 1);
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    int hms = to_ymd(tp.tv_sec);
+    int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
+    int64_to_bcd(sizeof(struct m2cl_symbol) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
+    strcpy(p.exchange, exchange);
+
+    mdc_send((char*)&p, sizeof(p));
+    return 0;
+}
+
+int mdc_req_mktdata(char cmd, int feedid, int64_t seqno) {
+    struct m2cl_req_quote p;
+    p.head.begin = 0xff;
+    int64_to_bcd(53, p.head.fmt, 1);
+    int64_to_bcd(1, p.head.ver, 1);
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    int hms = to_ymd(tp.tv_sec);
+    int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
+    int64_to_bcd(sizeof(struct m2cl_req_quote) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
+
+    p.cmd = cmd;
+    int64_to_bcd(feedid, p.feedid, 1);
+    int64_to_bcd(seqno, p.start_seqno, 8);
+
+    mdc_send((char*)&p, sizeof(p));
+    return 0;
+}
+
+int mdc_req_symbol_group(const char* exchange) {
+    struct m2cl_symbol p;
+    p.head.begin = 0xff;
+    int64_to_bcd(56, p.head.fmt, 1);
+    int64_to_bcd(1, p.head.ver, 1);
+    struct timespec tp;
+    clock_gettime(CLOCK_REALTIME, &tp);
+    int hms = to_ymd(tp.tv_sec);
+    int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
+    int64_to_bcd(sizeof(struct m2cl_symbol) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
+    strcpy(p.exchange, exchange);
+
+    mdc_send((char*)&p, sizeof(p));
+    return 0;
+}
+
+int on_mdc_connect() {
+    mdc_req_login(1, g_sysname, g_account, g_pwd);
+    return 0;
+}
+
+int mdc_reconnect(char* addr) {
+    char ip[64];
+    char service[24];
+    split_name_value_pair(addr, ip, service, ':');
+
+    int sock = -1;
+    while (sock == -1) {
+        sock = mdc_open(ip, service);
+        sleep(1);
+    }
+    Logf("reconnected: %s:%s", ip, service);
+    on_mdc_connect();
+    return sock;
+}
+
+int mdc_read_stdin(FILE* fp, ringbuf_t* ring) {
+    char inputbuf[1024];
+    size_t readcnt = fread(inputbuf, 1, 1024, fp);
+    if (readcnt == 0) {
+        return -1;
+    }
+    size_t writecnt = ring_write(inputbuf, readcnt, ring);
+    if ((int)writecnt < readcnt) {
+        Logf("err: ring buffer full on write");
+    }
+    return writecnt;
+}
+
+// returns -1 if error, in this case, we should try to reconnect
+// otherwise, return number of bytes read
+int mdc_read_async(int mdc_sock, ringbuf_t* ring) {
+    char inputBuf[1024];
+    fd_set readfds;
+    struct timeval timeout;
+
+    FD_ZERO(&readfds);
+    FD_SET(mdc_sock, &readfds);
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    int selRet, readCnt;
+    selRet = select(mdc_sock + 1, &readfds, NULL, NULL, &timeout);
+    if (selRet == 0) {
+        return 0;
+    }
+    else if (selRet == -1) {
+        Logf("select err: %d(%s)", errno, strerror(errno));
+        return 0;
+    }
+    readCnt = read(mdc_sock, inputBuf, 1024);
+    if (readCnt == -1) {
+        if (errno == EINTR) {
+            return 0;
+        }
+        else {
+            LogErr("read socket err: %d(%s)", errno, strerror(errno));
+            return -1;
+        }
+    }
+    else if (readCnt == 0) { //socket closed
+        return -1;
+    }
+    size_t writecnt = ring_write(inputBuf, readCnt, ring);
+    if ((int)writecnt < readCnt) {
+        Logf("err: ring buffer full on write");
+    }
+    return writecnt;
+}
+
+int read_args(int argc, char** argv) {
+    int c;
+    int option_index = 0;
+    time_t now;
+    struct option long_options[] = {
+        { "help", no_argument, 0, 'h' },
+        { "stdout", no_argument, 0, 'o' },
+        { "saveio", no_argument, 0, 's' },
+        { "stdin", no_argument, 0, 'i' },
+        { "plain", no_argument, 0, 'p' },
+        { "version", no_argument, 0, 'v' },
+        // { "delete", required_argument, 0, 0 },
+        // { "verbose", no_argument, 0, 0 },
+        // { "create", required_argument, 0, 'c' },
+        // { "file", required_argument, 0, 0 },
+        { 0, 0, 0, 0 }
+    };
+    while (1) {
+        c = getopt_long(argc, argv, "vhosip", long_options, &option_index);
+        if (c == -1) {
+            break;
+        }
+        switch (c) {
+        case 0:
+            break;
+        case '?':
+            LogErr("unknown usage");
+            print_help();
+            break;
+        case 'h':
+            print_help();
+            exit(0);
+            break;
+        case 'v':
+            print_version();
+            exit(0);
+            break;
+        case 'o':
+            g_outfp = stdout;
+            Logf("redirect to stdout");
+            break;
+        case 's':
+            now = time(NULL);
+            char fn[64];
+            sprintf(fn, "io_%d_%d.sav", to_ymd(now), to_hms(now));
+            g_sav_fh = fopen(fn, "wb");
+            break;
+        case 'i':
+            g_in_fh = stdin;
+            break;
+        case 'p': // plain
+            g_plain = 1;
+            break;
+        default:
+            LogErr("unknown arg %c", c);
+            print_help();
+            break;
+        }
+    }
+    if (optind < argc) {
+        sprintf(g_cfg_fn, "%s", argv[optind]);
+        Logf("config file: %s", g_cfg_fn);
+    }
+    return 0;
+}
+
+char g_plain_head[256];
+
+const char* fmt_plain_head(struct m2_head* head) {
+    int64_t t = bcd64(head->time);
+    sprintf(g_plain_head, "mdc %d,%d,%02ld:%02ld:%02ld.%04ld",
+        bcd32(head->fmt),
+        bcd32(head->ver),
+        t / 100000000,
+        (t % 100000000) / 1000000,
+        (t % 1000000) / 10000,
+        t % 10000);
+    return g_plain_head;
+}
+
+int mdc_parse_heartbeat(const char* buf, size_t sz) {
+    struct m2_heartbeat* p = (struct m2_heartbeat*)buf;
+    if (g_plain) {
+        Logf("%s heartbeat", fmt_plain_head(&p->head));
+    }
+    return 0;
+}
+
+int mdc_parse_login(const char* buf, size_t sz) {
+    struct m2sv_login* p = (struct m2sv_login*)buf;
+    char msg[65];
+    int i;
+    txstr(p->message, msg, 64);
+    int priv_cnt = bcd32(p->priv_cnt);
+    if (g_plain) {
+        Logf("%s login: result=%c, msg=%s, expire=%d, cnt=%d",
+            fmt_plain_head(&p->head),
+            p->result,
+            msg,
+            bcd32(p->expire),
+            priv_cnt);
+        struct m2_privilege_rec* rec = (struct m2_privilege_rec*)p->tail;
+        for (i = 0; i < priv_cnt; ++i) {
+            char exchange[13];
+            txstr(rec->exchange, exchange, 12);
+            int feedid = bcd32(rec->feed_id);
+            Logf("  |%s login: ID=%d, fg=0x%02x, exchange=%s",
+                fmt_plain_head(&p->head),
+                feedid,
+                rec->feed_type,
+                exchange);
+            rec++;
+        }
+    }
+    if (p->result == 'Y') {
+        Logf("login OK: msg=%s, expire=%d, cnt=%d", msg, bcd32(p->expire), priv_cnt);
+        struct m2_privilege_rec* rec = (struct m2_privilege_rec*)p->tail;
+        for (i = 0; i < priv_cnt; ++i) {
+            char exchange[13];
+            txstr(rec->exchange, exchange, 12);
+            int feedid = bcd32(rec->feed_id);
+            Logf("  |ID=%d, fg=0x%02x, exchange=%s", feedid, rec->feed_type, exchange);
+            rec++;
+        }
+    }
+    else if (p->result == 'N') {
+        LogErr("mdc login fail: %s", msg);
+        destroy_app(); // should we retry on login failure or exit
+        exit(EXIT_FAILURE);
+    }
+    return 0;
+}
+
+struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
+    struct SymbolInfo* si = NULL;
+    simap_t::iterator iter = g_simap.find(symbol);
+    if (iter == g_simap.end()) {
+        si = alloc_symbol();
+        int midx = si2midx(si);
+        memset(si, 0x00, sizeof(struct SymbolInfo));
+        g_simap[symbol] = midx;
+        strcpy(si->symbol, symbol);
+        strcpy(si->exchange, exchange);
+        si->session_status = -1;
+        Logf("alloc symbol: %s", symbol);
+    }
+    else {
+        si = gsm->symbols + iter->second;
+    }
+    return si;
+}
+
+struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange) {
+    char key[40];
+    sprintf(key, "%s;%s", exchange, root);
+    struct SymbolRootInfo* sr = NULL;
+    simap_t::iterator iter = g_srmap.find(key);
+    if (iter == g_srmap.end()) {
+        sr = alloc_symbol_root();
+        int midx = sr2midx(sr);
+        memset(sr, 0x00, sizeof(struct SymbolRootInfo));
+        g_srmap[key] = midx;
+        strcpy(sr->group_code, root);
+        strcpy(sr->exchange, exchange);
+        Logf("alloc symbol group: %s", key);
+    }
+    else {
+        sr = gsm->roots + iter->second;
+    }
+    return sr;
+}
+
+void mdc_dump_symbol(struct m2_head* h, struct m2sv_symbol* p) {
+    int symbolcnt = bcd32(p->symbol_cnt);
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    Logf("%s symbol: result=%c, exchange=%s, cnt=%d",
+        fmt_plain_head(h), p->result, p->exchange, symbolcnt);
+    int i;
+    struct m2_symbol_rec* rec = (struct m2_symbol_rec*)p->tail;
+    for (i = 0; i < symbolcnt; ++i) {
+        char symbol[25];
+        txstr(rec->symbol, symbol, 24);
+        char name[49];
+        txstr(rec->name, name, 48);
+        char kind[13];
+        txstr(rec->kind, kind, 12);
+        char strikep[13];
+        txstr(rec->strike_price, strikep, 12);
+        char scale[73];
+        txstr(rec->scale, scale, 72);
+        Logf("  |%s symbol=%s, name=%s, kind=%d, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
+            fmt_plain_head(h),
+            symbol, name, kind,
+            bcd32(rec->duemon),
+            bcd32(rec->native_duemon),
+            bcd32(rec->start_date),
+            bcd32(rec->settle_date),
+            bcd32(rec->first_notice_date),
+            bcd32(rec->second_notice_date),
+            bcd32(rec->end_date),
+            bcd32(rec->last_trade_date),
+            rec->type_fg,
+            bcd32(rec->lot_size),
+            strikep,
+            rec->extra_fg,
+            scale);
+        rec++;
+    }
+}
+
+void addRemoteMonthEntry(const char* exchgcomm, int deliveryYM) {
+    if (strncmp(exchgcomm, "TCE", 3) != 0 && strncmp(exchgcomm, "TGE", 3) != 0 && strncmp(exchgcomm, "JPX", 3) != 0) {
+        return;
+    }
+    simap_t::iterator fiter = gFarMonthMap.find(exchgcomm);
+    if (fiter == gFarMonthMap.end()) {
+        Logf("--- add %s, %d to gFarMonthMap", exchgcomm, deliveryYM);
+        gFarMonthMap[exchgcomm] = deliveryYM;
+    }
+    else {
+        if (deliveryYM > fiter->second) {
+            Logf("--- replace %s, %d to gFarMonthMap", exchgcomm, deliveryYM);
+            gFarMonthMap[exchgcomm] = deliveryYM;
+        }
+    }
+}
+
+struct SymbolRootInfo* get_commroot_info(const char* root, const char* exchange) {
+    char rootkey[36];
+    sprintf(rootkey, "%s;%s", exchange, root);
+    simap_t::iterator it = g_srmap.find(rootkey);
+    if (it != g_srmap.end()) {
+        return gsm->roots + it->second;
+    }
+    return NULL;
+}
+
+const char* getCategoryNameById(int id) {
+    switch (id) {
+    case 1:
+        return "指數";
+    case 2:
+        return "利率";
+    case 3:
+        return "匯率";
+    case 4:
+        return "債券";
+    case 5:
+        return "個股";
+    case 6:
+        return "農產品";
+    case 7:
+        return "金屬";
+    case 8:
+        return "能源";
+    case 9:
+        return "其他";
+    case 100:
+        return "現貨";
+    }
+    return "未歸類";
+}
+
+int mdc_parse_symbol(const char* buf, size_t sz) {
+    struct m2sv_symbol* p = (struct m2sv_symbol*)buf;
+    if (g_plain) {
+        mdc_dump_symbol(&p->head, p);
+    }
+
+    if (p->result == 'N') {
+        Logf("symbol reply err");
+        return 0;
+    }
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    int cnt = bcd32(p->symbol_cnt);
+    int i;
+    struct m2_symbol_rec* rec = (struct m2_symbol_rec*)p->tail;
+    for (i = 0; i < cnt; ++i) {
+        char symbol[25];
+        txstr(rec->symbol, symbol, 24);
+        struct SymbolInfo* si = make_symbol(symbol, exchange);
+        if (si) {
+            txstr(rec->name, si->name, 48);
+            txstr(rec->kind, si->root, 12);
+            si->duemon = bcd32(rec->duemon);
+            si->native_duemon = bcd32(rec->native_duemon);
+            si->start_date = bcd32(rec->start_date);
+            si->settle_date = bcd32(rec->settle_date);
+            si->first_notice_date = bcd32(rec->first_notice_date);
+            si->second_notice_date = bcd32(rec->second_notice_date);
+            si->end_date = bcd32(rec->end_date);
+            si->last_trade_date = bcd32(rec->last_trade_date);
+            si->type_fg = rec->type_fg;
+            si->lot_size = bcd32(rec->lot_size);
+            txstr(rec->strike_price, si->strike_price, sizeof(rec->strike_price));
+            si->extra_fg = rec->extra_fg;
+            txstr(rec->scale, si->scale, sizeof(rec->scale));
+
+            // create new symbol entry for spot index
+            char findkey[64];
+            sprintf(findkey, "%s;%s", si->exchange, si->root);
+            s2spairmap_t::iterator fsiter = g_fut_to_spot_map.find(findkey);
+            if (fsiter != g_fut_to_spot_map.end()) {
+                Logf("%s found in fut_to_spot_map", findkey);
+                simap_t::iterator sciter = g_simap.find(fsiter->second.str1);
+                if (sciter == g_simap.end()) {
+                    struct SymbolInfo* s1 = make_symbol(fsiter->second.str1.c_str(), si->exchange);
+                    memcpy(s1, si, sizeof(struct SymbolInfo));
+                    s1->type_fg = 0x20;
+                    strcpy(s1->symbol, fsiter->second.str1.c_str());
+                    strcpy(s1->name, fsiter->second.str2.c_str());
+                    strcpy(s1->root, fsiter->second.str1.c_str());
+                    Logf("add symbol %s, %s to map", fsiter->second.str1.c_str(), s1->name);
+                    //bm
+                    struct SymbolRootInfo* root0 = get_commroot_info(si->root, si->exchange);
+                    if (root0) {
+                        struct SymbolRootInfo* newRoot = make_symbol_root(s1->root, s1->exchange);
+                        memcpy(newRoot, root0, sizeof(struct SymbolRootInfo));
+                        strcpy(newRoot->exchange, s1->exchange);
+                        strcpy(newRoot->group_code, s1->root);
+                        char rootkey1[40];
+                        sprintf(rootkey1, "%s;%s", s1->exchange, s1->root);
+                        g_srmap[rootkey1] = sr2midx(newRoot);
+                    }
+
+                    char typeexchgcomm[200];
+                    sprintf(typeexchgcomm, "%d;%s;%s", 0, s1->exchange, s1->root);
+                    gSymbol2CategoryMap[typeexchgcomm] = 100;
+
+                    s1->category_id = 100;
+                    //stat.BytesSent += SendSymbolCache(pSpotCache);
+                    //Logf("subscribe: %s::%s", pSpotCache->commodity.ExchangeAbbr, pSpotCache->commodity.CommRootAbbr);
+                    //mdcapi.quotation_subscribe(curr_handle, pSpotCache->commodity.ExchangeAbbr, pSpotCache->commodity.CommRootAbbr, Mdca_QT_All);
+                }
+            }
+
+            if (IS_FUTURE(si->type_fg) && !(IS_SPREAD(si->extra_fg))) {
+                if (isSubscribed(si)) {
+                    char exchgcomm[65];
+                    sprintf(exchgcomm, "%s;%s", si->exchange, si->root);
+                    addRemoteMonthEntry(exchgcomm, si->duemon);
+                }
+            }
+        }
+        rec++;
+    }
+    return 0;
+}
+
+int mdc_parse_sub_reply(const char* buf, size_t sz) {
+    struct m2sv_sub_reply* p = (struct m2sv_sub_reply*)buf;
+    if (g_plain) {
+        char msgdump[97];
+        txstr(p->message, msgdump, 96);
+        Logf("%s sub reply: result=%c, cmd=%c, feedid=%d, seqno=%ld, msg=%s",
+            fmt_plain_head(&p->head),
+            p->result,
+            p->cmd,
+            bcd32(p->feed_id),
+            bcd64(p->seqno),
+            msgdump);
+    }
+    if (p->result == 'Y') {
+        Logf("sub reply OK: cmd=%c");
+    }
+    else if (p->result == 'N') {
+        Logf("sub reply failed: cmd=%c");
+    }
+    int feedid = bcd32(p->feed_id);
+    int64_t seqno = bcd64(p->seqno);
+    char msg[97];
+    txstr(p->message, msg, 96);
+    Logf("  |cmd=%c, copyid=%d, seqno=%ld, msg=%s", p->cmd, feedid, seqno, msg);
+    return 0;
+}
+
+// returns NULL if not found
+struct SymbolInfo* get_symbol(const char* symbol) {
+    simap_t::iterator iter = g_simap.find(symbol);
+    if (iter == g_simap.end()) {
+        return NULL;
+    }
+    return gsm->symbols + iter->second;
+}
+
+const char* ConvertToMIC(const char* exchg) {
+    return exchg;
+}
+
+/*
+int send_tick(const LPMdcs_QuotationPtr q, struct SymbolCache* psi) {
+    const Mdcs_Commodity* si = &psi->commodity;
+    struct Vip2AddTick t;
+    MakeAddTickEvent(q, &t, psi);
+    if (psi->commodity.Category == Mdct_CC_Stock_MIN) {
+        if (t.Tick.Parr[0].Price == 0) {
+            return 0;
+        }
+    }
+
+    //bm
+    if (psi->ba_dirty) {
+        if ((psi->depth.BidPrice1 > q->Deal->LastPrice) || (psi->depth.AskPrice1 < q->Deal->LastPrice)) {
+            logf("tick outrange orderbook");
+            SendBAforReal(&psi->depth, psi);
+            psi->ba_dirty = 0;
+        }
+    }
+
+    char jsonbuf[2048];
+    int len = MakeJsonAddTick(&t, jsonbuf, 2048);
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$Tick$%s",
+            ConvertToMIC(si->ExchangeAbbr),
+            ConvertToApxSymbolType(si->Category)[1],
+            t.Symbol);
+        ZmqSend(sendbuf, outsz, ZMQ_SNDMORE);
+        ZmqSend(jsonbuf, len, 0);
+        return outsz + len;
+    }
+    return 0;
+}
+*/
+
+void convertOptionCode(const char* symbol, char* newSymbolCode) {
+    strcpy(newSymbolCode, symbol);
+}
+
+void FillTimeString(char* buf, int buflen) {
+    time_t t0 = time(NULL);
+    struct tm* t1 = localtime(&t0);
+    strftime(buf, buflen, "%Y%m%d_%H:%M:%S.000", t1);
+}
+
+// 0: clear quote, 2: open, 7: close
+void MakeSymbolTradeSessionUpdateEvent(const char* symbol, struct Vip2UpdateEvent* r1, int status) {
+    r1->Mode = 57;
+    r1->Version = 0;
+
+    char newSymbolCode[64];
+    convertOptionCode(symbol, newSymbolCode);
+
+    strcpy(r1->FilterCol, "SYMBO");
+    sprintf(r1->FilterVal, "%s.%s", newSymbolCode, "US");
+    FillTimeString(r1->EventTime, JsonValLen);
+    r1->EventType = 5;
+    r1->ColListCnt = 1;
+    strcpy(r1->ColList[0].ColName, "340");
+    sprintf(r1->ColList[0].ColVal, "%d", status);
+}
+
+int emd_send(const char* buf, size_t len, int flags) {
+    /*
+    struct timespec tp;
+    if (bandwidth_control) {
+        clock_gettime(CLOCK_REALTIME, &tp);
+        double difft = diff_timespec(&bandwidth_timeout, &tp);
+        if (difft<0.0) {   // timeout
+            bandwidth_timeout.tv_sec++;
+            current_bandwidth = len;
+        }
+        else {   // not timeout
+            if (current_bandwidth<(max_kbytes_per_sec*1024)) {
+                current_bandwidth += len;
+            }
+            else {
+                struct timespec sleeptp;
+                sleeptp.tv_sec = 0;
+                sleeptp.tv_nsec = difft*1.0e9;
+                nanosleep(&sleeptp, NULL);
+                Logf("sleep %d nanoseconds", sleeptp.tv_nsec);
+                current_bandwidth = len;
+                bandwidth_timeout.tv_sec++;
+            }
+        }
+    }
+    */
+    int ret;
+    if (g_outfp) {
+        ret = fwrite(buf, 1, len, g_outfp);
+        ret += fwrite("\n", 1, 1, g_outfp);
+        fflush(g_outfp);
+    }
+    if (g_zout1 != NULL) {
+        ret = zmq_send(g_zout1, buf, len, flags);
+    }
+    if (g_zout2 != NULL) {
+        ret = zmq_send(g_zout2, buf, len, flags);
+    }
+    return ret;
+}
+
+const char* convert_to_apex_symbol_type(char fg) {
+    switch (fg) {
+    case 0x10: // index
+        return "IX";
+    case 0x20: // common stock
+        return "CS";
+    case 0x21: // warrant
+        return "WR";
+    case 0x30: // commodity future
+        return "CF";
+    case 0x31: // index future
+        return "NF";
+    case 0x32: // stock future
+        return "SF";
+    case 0x33: // interest future
+        return "IF";
+    case 0x34: // bond future
+        return "BF";
+    case 0x35: // currency future
+        return "XF";
+    case 0x40: // index option
+        return "NO";
+    case 0x41: // stock option
+        return "SO";
+    case 0x42: // future  option
+        return "FO";
+    case 0x43: // bond option
+        return "BO";
+    case 0x44: // currency option
+        return "XO";
+    case 0x45: // interest option
+        return "IO";
+    }
+    return "  ";
+}
+
+int SendTradeSessionStatus(struct SymbolInfo* si, int status) {
+    //int sleepOnSz = gSleepKB * 1024;
+    //static int flowCtrl = 0;
+    struct Vip2UpdateEvent s;
+    MakeSymbolTradeSessionUpdateEvent(si->symbol, &s, status);
+    char jsonbuf[512];
+    int len = MakeJsonUpdateEvent(&s, jsonbuf, 512);
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
+            ConvertToMIC(si->exchange),
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            s.FilterVal);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+        /*
+        if (quotelogfh) {
+            fprintf(quotelogfh, "send trade status: symbol=%s, %s(%d)\n", psi->commodity.Code, get_trade_status_string(status), status);
+        }
+        flowCtrl += outsz + len;
+        if (sleepOnSz > 0 && flowCtrl > sleepOnSz) {
+            flowCtrl = 0;
+            struct timespec req;
+            req.tv_sec = 0;
+            req.tv_nsec = 100000000;
+            nanosleep(&req, NULL);
+        }
+        */
+        return outsz + len;
+    }
+    return 0;
+}
+
+void fill_timestamp(int ymd, int64_t hmsffff, char* buf, int buflen) {
+    sprintf(buf, "%d_%02ld:%02ld:%02ld.%03ld",
+        ymd,
+        hmsffff / 100000000,
+        (hmsffff % 100000000) / 1000000,
+        (hmsffff % 1000000) / 10000,
+        (hmsffff % 10000) / 10);
+}
+
+int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
+    if (si->session_status == -1) {
+        if (fexist(p, QM_SESSION_STATUS)) {
+            SendTradeSessionStatus(si, ConvertToApxTradeSessionStatus(bcd32(p->trade_session_status)));
+            si->session_status = bcd32(p->trade_session_status);
+            Logf("initial trade session status for symbol %s=%d", si->symbol, p->trade_session_status);
+        }
+    }
+    else if (fchanged(p, QM_SESSION_STATUS)) {
+        SendTradeSessionStatus(si, ConvertToApxTradeSessionStatus(bcd32(p->trade_session_status)));
+        Logf("symbol %s trade session status changed from %d to %d", si->symbol, si->session_status, p->trade_session_status);
+        si->session_status = bcd32(p->trade_session_status);
+    }
+
+    si->session_date = bcd32(p->trade_date);
+    si->rise_limit = sbcd64(p->rise_limit);
+    si->fall_limit = sbcd64(p->fall_limit);
+    si->open_ref = sbcd64(p->open_ref);
+    si->close = sbcd64(p->close);
+    si->settlement = sbcd64(p->settlement);
+    si->prev_close = sbcd64(p->prev_close);
+    si->prev_settlement = sbcd64(p->prev_settlement);
+    si->prev_oi = bcd64(p->prev_oi);
+    si->open = sbcd64(p->open);
+    si->high = sbcd64(p->high);
+    si->low = sbcd64(p->low);
+
+    struct Vip2UpdateEvent r1;
+    r1.Mode = 57;
+    r1.Version = 0;
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+
+    strcpy(r1.FilterCol, "SYMBO");
+    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
+    time_t nowt = time(NULL);
+    int ymd = to_ymd(nowt); //#todo, date value will be incorrect on midnight
+    int64_t headtime = bcd64(head->time);
+    fill_timestamp(ymd, headtime, r1.EventTime, JsonValLen);
+    r1.EventType = 2;
+    int col = 0;
+    strcpy(r1.ColList[col].ColName, "1150"); // previous close
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_close);
+    strcpy(r1.ColList[col].ColName, "1025"); // open
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->open);
+    strcpy(r1.ColList[col].ColName, "332"); // high
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->high);
+    strcpy(r1.ColList[col].ColName, "333"); // low
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->low);
+    strcpy(r1.ColList[col].ColName, "31"); // close
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->close);
+    strcpy(r1.ColList[col].ColName, "1149"); // up limit
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->rise_limit);
+    strcpy(r1.ColList[col].ColName, "1148"); // down limit
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->fall_limit);
+    strcpy(r1.ColList[col].ColName, "20201"); // settlement price
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->settlement);
+    strcpy(r1.ColList[col].ColName, "20206"); // prev settlement price
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_settlement);
+    r1.ColListCnt = col;
+
+    char jsonbuf[2048];
+    int len = MakeJsonUpdateEvent(&r1, jsonbuf, sizeof(jsonbuf));
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
+            ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->symbol);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+        return outsz + len;
+    }
+    return 0;
+}
+
+int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
+    struct Vip2AddTick t;
+    t.Mode = 51;
+    t.Version = 48;
+    sprintf(t.Symbol, "%s.US", si->symbol);
+    sprintf(t.SecType, "%c", 'S'); //#todo, 'S' to be replaced, when real date arrive
+
+    t.Tick.TradeType = 3;
+    strcpy(t.Tick.Plottable, "11");
+    t.Tick.UpdStat = 1;
+    fill_timestamp(bcd32(t0->date), bcd64(t0->time), t.Tick.TickTime, JsonValLen);
+    t.Tick.TotalVol = bcd64(t0->totvol);
+    sprintf(t.Tick.TotAmt, "%.0f", bcd64(t0->tot_value) / fdec_tbl[bcd32(t0->tot_value_dec)]);
+    t.Tick.PriceCnt = 1;
+    t.Tick.NoVolCnt = 0;
+    t.Tick.Parr[0].Price = sbcd64(t0->price);
+    t.Tick.Parr[0].Vol = bcd64(t0->tickvol);
+    t.Tick.Parr[0].Type = 0;
+
+    char jsonbuf[2048];
+    int len = MakeJsonAddTick(&t, jsonbuf, sizeof(jsonbuf));
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$Tick$%s",
+            ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            t.Symbol);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+        return outsz + len;
+    }
+    return 0;
+}
+
+int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
+    struct Vip2UpdateBA r1;
+    r1.Mode = 53;
+    r1.Version = 48;
+    //bm
+    sprintf(r1.Symbol, "%s.%s", si->symbol, "US");
+    char sectype = convert_to_apex_symbol_type(si->type_fg)[1];
+    sprintf(r1.SecType, "%c", sectype);
+    fill_timestamp(bcd32(ba->date), bcd64(ba->time), r1.BA.BATime, JsonValLen);
+    r1.BA.TradeType = 3;
+    r1.BA.MDFeedT = 101;
+    r1.BA.FBidPrice = 0;
+    r1.BA.FBidVol = 0;
+    r1.BA.FAskPrice = 0;
+    r1.BA.FAskVol = 0;
+
+    int depth = bcd32(ba->depth);
+    struct m2_pv* baItem = (struct m2_pv*)ba->tail;
+    int i;
+    for (i = 0; i < depth; ++i) {
+        r1.BA.Bid[i].BAPrice = sbcd64(baItem->price);
+        r1.BA.Bid[i].BAVol = bcd32(baItem->vol);
+        baItem++;
+        r1.BA.Ask[i].BAPrice = sbcd64(baItem->price);
+        r1.BA.Ask[i].BAVol = bcd32(baItem->vol);
+        baItem++;
+    }
+
+    return 0;
+}
+
+int mdc_parse_tick_ext(struct m2_tick_ext* t) {
+    return 0;
+}
+
+void dump_quote(struct m2_head* h, struct m2_quote* q) {
+    Logf("  |%s quote: existfg=%02x, updatefg=%02x, sessionstatus=%d, sessiontype=%d, tradedt=%d, risel=%ld, falll=%ld, openref=%ld, close=%ld, settle=%ld, prevclose=%ld, prevsettle=%ld, prevoi=%ld, open=%ld, high=%ld, low=%ld",
+        fmt_plain_head(h),
+        bcd32(q->exist_fg), bcd32(q->update_fg),
+        bcd32(q->trade_session_status),
+        bcd32(q->trade_session_type),
+        bcd32(q->trade_date),
+        sbcd64(q->rise_limit), sbcd64(q->fall_limit),
+        sbcd64(q->open_ref),
+        sbcd64(q->close),
+        sbcd64(q->settlement),
+        sbcd64(q->prev_close),
+        sbcd64(q->prev_settlement),
+        bcd64(q->prev_oi),
+        sbcd64(q->open),
+        sbcd64(q->high), sbcd64(q->low));
+}
+
+void dump_tick(struct m2_head* h, struct m2_tick* t) {
+    Logf("  |%s tick: fg=%02x, cnt=%d, date=%d, time=%ld, price=%ld, tickvol=%d, totvol=%ld, bid=%ld, bidvol=%d, ask=%ld, askvol=%d, valdec=%d, value=%ld, totvaldec=%d, totval=%ld, balance=%ld, oi=%ld, baoffset=%c, tradestatus=%c",
+        fmt_plain_head(h),
+        t->fg, bcd32(t->cnt),
+        bcd32(t->date), bcd64(t->time),
+        sbcd64(t->price), bcd32(t->tickvol),
+        bcd64(t->totvol),
+        sbcd64(t->bid), bcd64(t->bidvol),
+        sbcd64(t->ask), bcd64(t->askvol),
+        bcd32(t->value_dec), bcd64(t->value),
+        bcd32(t->tot_value_dec), bcd64(t->tot_value),
+        bcd64(t->balance), bcd64(t->oi),
+        t->ba_offset, t->trade_status);
+}
+
+void dump_tick_ext(struct m2_head* h, struct m2_tick_ext* t) {
+    dump_tick(h, (struct m2_tick*)t);
+    Logf("  |%s tickext: open=%ld, high=%ld, low=%ld",
+        sbcd64(t->open), sbcd64(t->high), sbcd64(t->low));
+}
+
+void dump_ba(struct m2_head* h, struct m2_ba* b) {
+    int depth = bcd32(b->depth);
+    Logf("%s ba: date=%d, time=%ld, depth=%d",
+        fmt_plain_head(h),
+        bcd32(b->date), bcd64(b->time), depth);
+    struct m2_pv* rec;
+    int i;
+    struct m2_pv* bidpv = (struct m2_pv*)b->tail;
+    struct m2_pv* askpv = bidpv + 1;
+    for (i = 0; i < depth; ++i) {
+        Logf("  |%s ba%d: bid=(%ld, %d), ask=(%ld, %d)",
+            fmt_plain_head(h), i,
+            sbcd64(bidpv->price), bcd32(bidpv->vol),
+            sbcd64(askpv->price), bcd32(askpv->vol));
+    }
+}
+
+void dump_mktdata(struct m2sv_quote* p) {
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    char symbol[25];
+    txstr(p->symbol, symbol, 24);
+    Logf("%s mktdata: feed_id=%d, data_id=%d, feedseqno=%ld, exchange=%s, symbol=%s, dec=%d, type=%c, datafg=%02x",
+        fmt_plain_head(&p->head),
+        bcd32(p->orig_feed_id),
+        bcd32(p->feed_id),
+        bcd64(p->seqno),
+        exchange, symbol,
+        bcd32(p->decimals),
+        p->data_type,
+        p->content_fg);
+    char* tail = p->tail;
+    if (p->content_fg & 0x01) {
+        dump_quote(&p->head, (struct m2_quote*)tail);
+        tail += sizeof(struct m2_quote);
+    }
+    if (p->content_fg & 0x02) {
+        if (*tail == 0x00) {
+            dump_tick(&p->head, (struct m2_tick*)tail);
+            tail += sizeof(m2_tick);
+        }
+        else if (*tail == 0x01 || *tail == 0x02 || *tail == 0x04) {
+            dump_tick_ext(&p->head, (struct m2_tick_ext*)tail);
+            tail += sizeof(m2_tick_ext);
+        }
+    }
+    if (p->content_fg & 0x04) {
+        dump_ba(&p->head, (struct m2_ba*)tail);
+        tail += sizeof(m2_ba);
+    }
+}
+
+int mdc_parse_mktdata(const char* buf, size_t sz) {
+    struct m2sv_quote* p = (struct m2sv_quote*)buf;
+    if (g_plain) {
+        dump_mktdata(p);
+    }
+    if (p->data_type != 'R') {
+        return 0;
+    }
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    char symbol[25];
+    txstr(p->symbol, symbol, 24);
+    struct SymbolInfo* si = make_symbol(symbol, exchange);
+    if (si == NULL) {
+        Logf("cannot find symbol %s on mktdata", symbol);
+        return 0;
+    }
+    int pricedec = bcd32(p->decimals);
+    if (si->decimals != pricedec) {
+        Logf("err: tick decimals=%d differs from symbol decimals=%d", pricedec, si->decimals);
+        return 0;
+    }
+
+    int hasquote = 0;
+    int hastick = 0;
+    int hasba = 0;
+    char* tail = p->tail;
+    if (p->content_fg & 0x01) {
+        hasquote = 1;
+        mdc_parse_quote(si, &p->head, (struct m2_quote*)tail);
+        tail += sizeof(struct m2_quote);
+    }
+    if (p->content_fg & 0x02) {
+        hastick = 1;
+        if (*tail == 0x00) {
+            mdc_parse_tick(si, (struct m2_tick*)tail);
+            tail += sizeof(struct m2_tick);
+        }
+        else {
+            mdc_parse_tick_ext((struct m2_tick_ext*)tail);
+            //#todo, how to deal with high, low, open in this tick?
+            tail += sizeof(struct m2_tick_ext);
+        }
+    }
+    if (p->content_fg & 0x04) {
+        hasba = 1;
+        mdc_parse_ba(si, (struct m2_ba*)tail);
+    }
+
+    return 0;
+}
+
+int mdc_parse_message(const char* buf, size_t sz) {
+    struct m2sv_message* p = (struct m2sv_message*)buf;
+    int msgid = bcd32(p->msgid);
+    int msglen = bcd32(p->msglen);
+    char content[10000];
+    txstr(p->tail, content, msglen);
+    if (g_plain) {
+        Logf("%s msg: id=%d, len=%d, msg=%s",
+            fmt_plain_head(&p->head),
+            msgid, msglen, content);
+    }
+    switch (msgid) {
+    case 1:
+        // double login, connection reset
+        break;
+    case 2:
+        // protocol error, connection reset
+        break;
+    case 1001:
+        // client read timeout, connect reset
+        break;
+    case 1002:
+        break;
+    }
+    Logf("message %d: %s", msgid, content);
+    return 0;
+}
+
+void dump_symbol_group(struct m2sv_symbol_group* p) {
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    int cnt = bcd32(p->cnt);
+    Logf("%s symbolgrp: result=%c, exchange=%s, cnt=%d",
+        fmt_plain_head(&p->head), exchange, cnt);
+    int i;
+    struct m2_symbol_group_rec* rec = (struct m2_symbol_group_rec*)p->tail;
+    for (i = 0; i < cnt; ++i) {
+        char grp[25];
+        txstr(rec->group_code, grp, 24);
+        char grpname[49];
+        txstr(rec->group_name, grpname, sizeof(rec->group_name));
+        char sessions[257];
+        txstr(rec->sessions, sessions, sizeof(rec->sessions));
+        char scales[385];
+        txstr(rec->scales, scales, sizeof(rec->scales));
+        char deriv_exchange[25];
+        txstr(rec->deriv_exchange, deriv_exchange, sizeof(rec->deriv_exchange));
+        char deriv_symbol[25];
+        txstr(rec->deriv_symbol, deriv_symbol, sizeof(rec->deriv_symbol));
+        char currency[9];
+        txstr(rec->currency, currency, sizeof(rec->currency));
+        Logf("  |%s grp%d: code=%s, name=%s, sessions=%s, scales=%s, deriv_exchange=%s, deriv_symbol=%s, multdec=%d, mult=%ld, currency=%s, feedec=%d, fee=%ld, taxdec=%d, tax=%ld, lotsz=%d, cat=%c, tz=%d, ext=%c",
+            i, grp, grpname, sessions, scales, deriv_exchange, deriv_symbol,
+            bcd32(rec->contract_multiplier_dec), bcd64(rec->contract_multiplier),
+            currency,
+            bcd32(rec->fee_dec), bcd64(rec->fee),
+            bcd32(rec->tax_dec), bcd64(rec->tax),
+            bcd32(rec->lot_size),
+            rec->category,
+            bcd32(rec->timezone),
+            rec->extension);
+        rec++;
+    }
+}
+
+int mdc_parse_symbol_group(const char* buf, size_t sz) {
+    struct m2sv_symbol_group* p = (struct m2sv_symbol_group*)buf;
+    if (g_plain) {
+        dump_symbol_group(p);
+    }
+    if (p->result == 'N') {
+        Logf("symbol group reply is N");
+        return 0;
+    }
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    int cnt = bcd32(p->cnt);
+    int i;
+    struct m2_symbol_group_rec* rec = (struct m2_symbol_group_rec*)p->tail;
+    for (i = 0; i < cnt; ++i) {
+        char grp[25];
+        txstr(rec->group_code, grp, 24);
+        struct SymbolRootInfo* sg = make_symbol_root(grp, exchange);
+        if (sg == NULL) {
+            Logf("cannot make symbol group %s", grp);
+            continue;
+        }
+        txstr(rec->group_name, sg->group_name, sizeof(rec->group_name));
+        txstr(rec->sessions, sg->sessions, sizeof(rec->sessions));
+        txstr(rec->scales, sg->scales, sizeof(rec->scales));
+        txstr(rec->deriv_exchange, sg->deriv_exchange, sizeof(rec->deriv_exchange));
+        txstr(rec->deriv_symbol, sg->deriv_symbol, sizeof(rec->deriv_symbol));
+        sg->contract_multiplier_dec = bcd32(rec->contract_multiplier_dec);
+        sg->contract_multiplier = bcd64(rec->contract_multiplier);
+        txstr(rec->currency, sg->currency, sizeof(rec->currency));
+        sg->fee_dec = bcd32(rec->fee_dec);
+        sg->fee = bcd64(rec->fee);
+        sg->tax_dec = bcd32(rec->tax_dec);
+        sg->tax = bcd64(rec->tax);
+        sg->lot_size = bcd32(rec->lot_size);
+        sg->category = rec->category;
+        sg->timezone = bcd32(rec->timezone);
+        sg->extension = rec->extension;
+
+        rec++;
+    }
+    return 0;
+}
+
+void dump_client_login(struct m2cl_login* p) {
+    char sysname[21], acc[13], pwd[13];
+    txstr(p->sysname, sysname, 20);
+    txstr(p->acc, acc, 12);
+    txstr(p->pwd, pwd, 12);
+    Logf("%s req login: ver=%d, sysname=%s, acc=%s, pwd=%s",
+        fmt_plain_head(&p->head),
+        bcd32(p->ver), sysname, acc, pwd);
+}
+
+void dump_client_symbol_request(struct m2cl_symbol* p) {
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    Logf("%s req symbol: exchange=%s", fmt_plain_head(&p->head), exchange);
+}
+
+void dump_quote_request(struct m2cl_req_quote* p) {
+    Logf("%s req quote: cmd=%c, feedid=%d, seqno=%ld",
+        fmt_plain_head(&p->head),
+        p->cmd, bcd32(p->feedid), bcd64(p->start_seqno));
+}
+
+void dump_symbolgrp_request(struct m2cl_symbol_group* p) {
+    char exchange[13];
+    txstr(p->exchange, exchange, 12);
+    Logf("%s req symbolgrp: exchange=%s", fmt_plain_head(&p->head), exchange);
+}
+
+int mdc_select(char* buf, size_t sz) {
+    struct m2_head* head = (struct m2_head*)buf;
+    int fmt = bcd32(head->fmt);
+    size_t len = bcd64(head->len);
+    switch (fmt) {
+    case 0: // heartbeat
+        mdc_parse_heartbeat(buf, sz);
+        break;
+    case 1: // login
+        mdc_parse_login(buf, sz);
+        break;
+    case 2: // symbol info
+        mdc_parse_symbol(buf, sz);
+        break;
+    case 3: // subscribe reply
+        mdc_parse_sub_reply(buf, sz);
+        break;
+    case 4: // quote/tick/ba
+        mdc_parse_mktdata(buf, sz);
+        break;
+    case 5:
+        mdc_parse_message(buf, sz);
+        break;
+    case 6:
+        mdc_parse_symbol_group(buf, sz);
+        break;
+    case 51:
+        if (g_plain) {
+            dump_client_login((struct m2cl_login*)buf);
+        }
+        Logf("client login");
+        break;
+    case 52:
+        if (g_plain) {
+            dump_client_symbol_request((struct m2cl_symbol*)buf);
+        }
+        Logf("client symbol request");
+        break;
+    case 53:
+        if (g_plain) {
+            dump_quote_request((struct m2cl_req_quote*)buf);
+        }
+        Logf("client quote request");
+        break;
+    case 56:
+        if (g_plain) {
+            dump_symbolgrp_request((struct m2cl_symbol_group*)buf);
+        }
+        Logf("client symbol group request");
+        break;
+    default:
+        LogErr("err: unknown mdc fmt: %d", fmt);
+        break;
+    }
+    return 0;
+}
+
+void print_buf_as_text(const char* buf, int sz, FILE* outpf) {
+    int i;
+    for (i = 0; i < sz; ++i) {
+        if ((i % 10) == 0) {
+            fprintf(outpf, "%s", "\n\t");
+        }
+        fprintf(outpf, "%02x ", (unsigned char)buf[i]);
+    }
+    fprintf(outpf, "%s", "\n");
+}
+
+int drop(const char* reason, ringbuf_t* ring, size_t sz, FILE* outpf) {
+    const int buf_size = 64 * 1024;
+    char buf[buf_size];
+    size_t dropsz = (sz > buf_size) ? buf_size : sz;
+    ring_read(buf, dropsz, ring);
+    fprintf(outpf, "drop: sz=%lu, reason=%s", dropsz, reason);
+    print_buf_as_text(buf, dropsz, outpf);
+    if (g_sav_fh) {
+        fwrite(buf, 1, dropsz, g_sav_fh);
+        fflush(g_sav_fh);
+    }
+    return 0;
+}
+
+int mdc_split(ringbuf_t* ring, char* buf, size_t* bytes_consumed, size_t* plen) {
+    struct m2_head* head = (struct m2_head*)buf;
+    *bytes_consumed = 0;
+    *plen = 0;
+    int markpos = ring_indexof(0xff, ring);
+    if (markpos > 0) {
+        *bytes_consumed += markpos;
+        drop("align esc", ring, markpos, stderr);
+    }
+    else if (markpos < 0) { // not found
+        if (ring_size(ring) > 0) {
+            *bytes_consumed += ring_size(ring);
+            drop("esc not found", ring, ring_size(ring), stderr);
+        }
+        return SHORT_ERR;
+    }
+    if (ring_size(ring) < MDC_MIN_SZ) {
+        return SHORT_ERR;
+    }
+    ring_peek(buf, sizeof(struct m2_head), ring);
+    size_t protlen = bcd32(head->len) + sizeof(struct m2_head);
+    if (protlen > MDC_MAX_SZ) {
+        *bytes_consumed += 1;
+        Logf("err: protocol too long, should increase input buffer: need %lu", protlen);
+        drop("prot too long", ring, 1, stderr);
+        return SIZE_OVERFLOW_ERR;
+    }
+    else if (protlen < MDC_MIN_SZ) {
+        *bytes_consumed += 1;
+        drop("prot len too short", ring, 1, stderr);
+        return CONTENT_ERR;
+    }
+    if (ring_size(ring) < protlen) {
+        return SHORT_ERR;
+    }
+    ring_peek_offset(sizeof(struct m2_head), buf + sizeof(struct m2_head), protlen - sizeof(struct m2_head), ring);
+    ring_remove(protlen, ring);
+    *bytes_consumed += protlen;
+    *plen = protlen;
+    if (g_sav_fh) {
+        fwrite(buf, 1, protlen, g_sav_fh);
+        fflush(g_sav_fh);
+    }
+    return NOT_ERR;
+}
+
+void mdc_exaust(ringbuf_t* ring) {
+    char buf[8 * 1024];
+    size_t consumed, protlen;
+    enum SplitError splitres;
+    while (1) {
+        splitres = (SplitError)mdc_split(ring, buf, &consumed, &protlen);
+        if (splitres == SHORT_ERR) {
+            break;
+        }
+        switch (splitres) {
+        case NOT_ERR:
+            mdc_select(buf, protlen);
+            continue;
+        default:
+            continue;
+        }
+    }
+}
+
+void read_config(const char* fn) {
+    FILE* pf = fopen(fn, "rt");
+    if (pf == NULL) {
+        fprintf(stderr, "cannot open %s", fn);
+        exit(EXIT_FAILURE);
+    }
+    gFtpPath[0] = '\0';
+    g_mdc_addr[0] = '\0';
+
+    char linebuf[256];
+    char key[64];
+    char value[256 - 64];
+    while (fgets(linebuf, 256, pf) != NULL) {
+        size_t linesz = strlen(linebuf);
+        if (linesz > 0 && linebuf[0] == '#') {
+            continue;
+        }
+        if (linebuf[linesz - 1] == '\n') {
+            linebuf[linesz - 1] = '\0';
+        }
+        char* tok;
+        tok = strtok(linebuf, "=");
+        if (tok != NULL) {
+            strcpy(key, tok);
+            ctrim(key);
+        }
+        else {
+            continue;
+        }
+        tok = strtok(NULL, "");
+        if (tok != NULL) {
+            strcpy(value, tok);
+            ctrim(value);
+        }
+        else {
+            continue;
+        }
+        if (strcmp(key, "user") == 0) {
+            sprintf(g_account, "%s", value);
+        }
+        else if (strcmp(key, "pwd") == 0) {
+            sprintf(g_pwd, "%s", value);
+        }
+        else if (strcmp(key, "sysname") == 0) {
+            sprintf(g_sysname, "%s", value);
+        }
+        else if (strcmp(key, "addr") == 0) {
+            sprintf(g_mdc_addr, "%s", value);
+        }
+        else if (strcmp(key, "ftp_path") == 0) {
+            sprintf(gFtpPath, "%s", value);
+            int slen = strlen(gFtpPath);
+            if (gFtpPath[slen - 1] == '/') {
+                gFtpPath[slen - 1] = '\0';
+            }
+        }
+        else if (strcmp(key, "sleep_on_KB") == 0) {
+            gSleepKB = atoi(value);
+        }
+        else if (strcmp(key, "ba_refresh_nsec") == 0) {
+            gRefreshInterval = atol(value);
+        }
+        else if (strcmp(key, "out_url1") == 0) {
+            strcpy(g_outurl1, value);
+        }
+        else if (strcmp(key, "out_url2") == 0) {
+            strcpy(g_outurl2, value);
+        }
+        else if (strcmp(key, "log_rotate_days") == 0) {
+            g_log_rotate_days = atol(value);
+        }
+    }
+    fclose(pf);
+}
+
+void read_exchanges_list() {
+    char line[64];
+    FILE* fp = fopen("exchanges.txt", "rt");
+    if (fp == NULL) {
+        fprintf(stderr, "read exchanges.txt fail\n");
+        exit(0);
+    }
+    while (fgets(line, 64, fp) != NULL) {
+        ctrim(line);
+        gExchanges.push_back(line);
+    }
+    fclose(fp);
+}
+
+int main(int argc, char** argv) {
+    strcpy(g_cfg_fn, "default.config");
+    read_args(argc, argv);
+    time_t now_timet = time(NULL);
+    char logfn[256];
+    sprintf(logfn, "spf2_%d.log", to_ymd(now_timet));
+    init_log(logfn, "wt");
+    Logf("spf2 ver:%s", SPF2_VER);
+
+    rotate_log("spf2_????????.log", 5, g_log_rotate_days);
+
+    read_config(g_cfg_fn);
+
+    read_exchanges_list();
+    LoadSpotTxt("stock.txt");
+
+    char fn[256];
+    sprintf(fn, "%s/GWHSTM.TXT", gFtpPath);
+    LoadMonthTable('f', fn);
+    sprintf(fn, "%s/MHSMB.TXT", gFtpPath);
+    LoadMonthTable('o', fn);
+    LoadSubscribeTableAPEXHSTB();
+
+    ringbuf_t g_ring;
+    ring_init(1024 * 1024, &g_ring);
+
+    struct sigaction sa;
+    sa.sa_handler = sigint_handler;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    int ret = sigaction(SIGINT, &sa, NULL);
+    if (ret == -1) {
+        fprintf(stderr, "%s\n", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    char shmname[256];
+    sprintf(shmname, "spf2shm.%s", SHM_VER);
+    spf2shm_init(shmname, 1);
+    Logf("shm ver=%d, size=%ld", gsm->shm_version, gsm->shm_size);
+
+    g_zout1 = open_zmq_out(g_outurl1, ZMQ_PUSH, 0);
+    g_zout2 = open_zmq_out(g_outurl2, ZMQ_PUSH, 0);
+
+    char buf[1024];
+    g_mdc_sock = mdc_reconnect(g_mdc_addr);
+    while (1) {
+        int readcnt;
+        if (g_in_fh) {
+            readcnt = mdc_read_stdin(g_in_fh, &g_ring);
+            if (readcnt == -1) {
+                fprintf(stderr, "eof\n");
+                break;
+            }
+        }
+        else {
+            readcnt = mdc_read_async(g_mdc_sock, &g_ring);
+            if (readcnt == -1) {
+                mdc_close(g_mdc_sock);
+                g_mdc_sock = -1;
+                g_mdc_sock = mdc_reconnect(g_mdc_addr);
+            }
+        }
+        mdc_exaust(&g_ring);
+    }
+    destroy_app();
+    return 0;
+}
