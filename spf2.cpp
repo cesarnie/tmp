@@ -657,11 +657,6 @@ const char* zmq_sockettype_str(int n) {
 }
 
 void* open_zmq_out(const char* addr, int mode, int isbind) {
-    g_zmqctx = zmq_ctx_new();
-    if (!g_zmqctx) {
-        Logf("err: cannot create zmq context");
-        return NULL;
-    }
     void* ret = zmq_socket(g_zmqctx, mode);
     if (!ret) {
         Logf("error in zmq_socket: %s, mode=%d", zmq_strerror(errno), mode);
@@ -2173,6 +2168,11 @@ int main(int argc, char** argv) {
     spf2shm_init(shmname, 1);
     Logf("shm ver=%d, size=%ld", gsm->shm_version, gsm->shm_size);
 
+    g_zmqctx = zmq_ctx_new();
+    if (!g_zmqctx) {
+        LogErr("err: cannot create zmq context");
+        exit(1);
+    }
     g_zout1 = open_zmq_out(g_outurl1, ZMQ_PUSH, 0);
     g_zout2 = open_zmq_out(g_outurl2, ZMQ_PUSH, 0);
 

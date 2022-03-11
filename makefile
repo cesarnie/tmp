@@ -4,7 +4,7 @@ PROGS=spf2
 #CPP=spf2.cpp ../inc/mdcapi.cpp spf2apx.cpp vip2json.cpp printer.cpp cpu.c -lzmq
 CPP=spf2.cpp ringbuffer.cpp log.cpp tools.cpp spf2shm.cpp fmtjson.cpp -lrt -lzmq
 OBJECTS = spf2.o ringbuffer.o log.o tools.o spf2shm.o fmtjson.o -lrt -lzmq
-CFLAGS=-g -O0 -Wall
+CFLAGS=-g -O0 -Wall -Wno-unused-variable -Wno-unused-but-set-variable
 
 # Default Rules:
 #$(P): $(OBJECTS)
