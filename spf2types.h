@@ -17,7 +17,7 @@ struct m2_heartbeat {
 
 struct m2cl_login {
     struct m2_head head; //
-    char ver[2];         //
+    char ver[1];         //
     char sysname[20];    //
     char acc[12];        //
     char pwd[12];        //

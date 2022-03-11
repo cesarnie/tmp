@@ -657,6 +657,9 @@ const char* zmq_sockettype_str(int n) {
 }
 
 void* open_zmq_out(const char* addr, int mode, int isbind) {
+    if (strlen(addr)==0) {
+        return NULL;
+    }
     void* ret = zmq_socket(g_zmqctx, mode);
     if (!ret) {
         Logf("error in zmq_socket: %s, mode=%d", zmq_strerror(errno), mode);
@@ -699,7 +702,7 @@ int mdc_open(const char* ip, const char* service) {
     hints.ai_flags = 0;
     int addRet = getaddrinfo(ip, service, &hints, &result);
     if (addRet != 0) {
-        LogErr("getaddrinfo err: %s", gai_strerror(addRet));
+        LogErr("getaddrinfo err: %s(%s:%s)", gai_strerror(addRet), ip, service);
         exit(EXIT_FAILURE);
     }
 
@@ -754,6 +757,7 @@ int mdc_send(char* data, size_t sz) {
 
 int mdc_req_login(int ver, const char* sysname, const char* acc, const char* pwd) {
     struct m2cl_login p;
+    memset(&p, 0x00, sizeof(m2cl_login));
     p.head.begin = 0xff;
     int64_to_bcd(51, p.head.fmt, sizeof(p.head.fmt));
     int64_to_bcd(1, p.head.ver, sizeof(p.head.ver));
@@ -762,6 +766,12 @@ int mdc_req_login(int ver, const char* sysname, const char* acc, const char* pwd
     int hms = to_ymd(tp.tv_sec);
     int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
     int64_to_bcd(sizeof(struct m2cl_login) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
+    int64_to_bcd(1, p.ver, sizeof(p.ver));
+    sprintf(p.sysname, "%s", sysname);
+    sprintf(p.acc, "%s", acc);
+    sprintf(p.pwd, "%s", pwd);
+
+    Logf("send login: ver=%d, sys=[%s], acc=[%s], pwd=[%s]", 1, p.sysname, p.acc, p.pwd);
 
     mdc_send((char*)&p, sizeof(p));
     return 0;
@@ -823,18 +833,19 @@ int on_mdc_connect() {
     return 0;
 }
 
-int mdc_reconnect(char* addr) {
+int mdc_reconnect(const char* addr) {
+    char addrbuf[MAX_URL_LEN];
+    strcpy(addrbuf, addr);
+
     char ip[64];
     char service[24];
-    split_name_value_pair(addr, ip, service, ':');
+    split_name_value_pair(addrbuf, ip, service, ':');
 
     int sock = -1;
     while (sock == -1) {
         sock = mdc_open(ip, service);
         sleep(1);
     }
-    Logf("reconnected: %s:%s", ip, service);
-    on_mdc_connect();
     return sock;
 }
 
@@ -2175,9 +2186,16 @@ int main(int argc, char** argv) {
     }
     g_zout1 = open_zmq_out(g_outurl1, ZMQ_PUSH, 0);
     g_zout2 = open_zmq_out(g_outurl2, ZMQ_PUSH, 0);
+    if (g_zout1==NULL && g_zout2==NULL) {
+        LogErr("err: all 2 zmq out socket NULL");
+        exit(1);
+    }
 
     char buf[1024];
     g_mdc_sock = mdc_reconnect(g_mdc_addr);
+    if (g_mdc_sock!=-1) {
+        on_mdc_connect();
+    }
     while (1) {
         int readcnt;
         if (g_in_fh) {
@@ -2193,6 +2211,9 @@ int main(int argc, char** argv) {
                 mdc_close(g_mdc_sock);
                 g_mdc_sock = -1;
                 g_mdc_sock = mdc_reconnect(g_mdc_addr);
+                if (g_mdc_sock!=-1) {
+                    on_mdc_connect();
+                }
             }
         }
         mdc_exaust(&g_ring);
