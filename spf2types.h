@@ -35,7 +35,7 @@ struct m2cl_req_quote {
     char start_seqno[8]; // mmddhhmm+ssssssss
 };
 
-struct m2cl_symbol_group {
+struct m2cl_symbol_kind {
     struct m2_head head; // 56
     char exchange[12];   //
 };

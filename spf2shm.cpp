@@ -87,7 +87,7 @@ struct SymbolRootInfo* alloc_symbol_root() {
     if (gsm->symbol_group_cnt < MAX_SYMBOL_ROOTS) {
         ++gsm->symbol_group_cnt;
         ret = &gsm->roots[gsm->symbol_group_cnt - 1];
-        Logf("alloc symbol group: %d", gsm->symbol_group_cnt - 1);
+        Logf("alloc symbol kind: %d", gsm->symbol_group_cnt - 1);
     }
     return ret;
 }

@@ -39,6 +39,11 @@ int txstr(const char* c0, char* c1, int protLen) {
     return i + 1;
 }
 
+void txstr_no_trim(const char* c0, char* c1, int protLen) {
+    memcpy(c1, c0, protLen);
+    c1[protLen] = '\0';
+}
+
 void ctrim(char* s) {
     char* p = s;
     int l = strlen(p);
