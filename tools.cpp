@@ -2,6 +2,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <stdio.h>
 
 int to_ymd(time_t t) {
     struct tm tm = *localtime(&t);
@@ -88,4 +89,9 @@ int64_t bcd_to_int64(const char* bcd, int len) {
         val = val * 100 + ((unsigned char)bcd[i] >> 4) * 10 + ((unsigned char)bcd[i] & 0x0f);
     }
     return val;
+}
+
+void fmt_padded_str(char* buf, const char* s, int len) {
+    int n = sprintf(buf, "%-*s", len - 1, s);
+    buf[len - 1] = ' ';
 }

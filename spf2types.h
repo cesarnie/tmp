@@ -35,7 +35,7 @@ struct m2cl_req_quote {
     char start_seqno[8]; // mmddhhmm+ssssssss
 };
 
-struct m2cl_symbol_kind {
+struct m2cl_symbol_root {
     struct m2_head head; // 56
     char exchange[12];   //
 };
@@ -58,7 +58,7 @@ struct m2sv_login {
 struct m2_symbol_rec {
     char symbol[24];            //
     char name[48];              //
-    char kind[12];              //
+    char root[12];              //
     char duemon[3];             // yyyymm
     char native_duemon[3];      // yyyymm, 交易所原生契約月份
     char start_date[4];         // 上市日期

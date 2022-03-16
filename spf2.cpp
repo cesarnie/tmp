@@ -769,9 +769,10 @@ int mdc_req_login(int ver, const char* sysname, const char* acc, const char* pwd
     int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
     int64_to_bcd(sizeof(struct m2cl_login) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
     int64_to_bcd(1, p.ver, sizeof(p.ver));
-    sprintf(p.sysname, "%s", sysname);
-    sprintf(p.acc, "%-*s", (int)sizeof(p.acc), acc);
-    sprintf(p.pwd, "%-*s", (int)sizeof(p.pwd), pwd);
+    fmt_padded_str(p.sysname, sysname, (int)sizeof(p.sysname));
+    //sprintf(p.sysname, "%s", sysname);
+    fmt_padded_str(p.acc, acc, (int)sizeof(p.acc));
+    fmt_padded_str(p.pwd, pwd, (int)sizeof(p.pwd));
 
     Logf("send login: ver=%d, sys=[%s], acc=[%s], pwd=[%s]", 1, p.sysname, p.acc, p.pwd);
 
@@ -810,7 +811,7 @@ int mdc_req_symbol(const char* exchange) {
     int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
     int64_to_bcd(sizeof(struct m2cl_symbol) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
 
-    sprintf(p.exchange, "%-*s", (int)sizeof(p.exchange), exchange);
+    fmt_padded_str(p.exchange, exchange, (int)sizeof(p.exchange));
     dump_client_symbol_request(&p);
 
     mdc_send((char*)&p, sizeof(p));
@@ -836,14 +837,14 @@ int mdc_req_mktdata(char cmd, int feedid, int64_t seqno) {
     return 0;
 }
 
-void dump_symbol_root_request(struct m2cl_symbol_kind* p) {
+void dump_symbol_root_request(struct m2cl_symbol_root* p) {
     char exchange[13];
     txstr(p->exchange, exchange, 12);
-    Logf("%s req symbol kind: exchange=%s", fmt_plain_head(&p->head), exchange);
+    Logf("%s req symbol root: exchange=%s", fmt_plain_head(&p->head), exchange);
 }
 
 int mdc_req_symbol_root(const char* exchange) {
-    struct m2cl_symbol_kind p;
+    struct m2cl_symbol_root p;
     p.head.begin = 0xff;
     int64_to_bcd(56, p.head.fmt, 1);
     int64_to_bcd(1, p.head.ver, 1);
@@ -852,7 +853,7 @@ int mdc_req_symbol_root(const char* exchange) {
     int hms = to_ymd(tp.tv_sec);
     int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
     int64_to_bcd(sizeof(struct m2cl_symbol) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
-    sprintf(p.exchange, "%-*s", (int)sizeof(p.exchange), exchange);
+    fmt_padded_str(p.exchange, exchange, (int)sizeof(p.exchange));
 
     mdc_send((char*)&p, sizeof(p));
     dump_symbol_root_request(&p);
@@ -1012,8 +1013,8 @@ void on_symbol_complete() {
     Logf("symbol complete");
 }
 
-void on_symbol_kind_complete() {
-    Logf("symbol kind complete");
+void on_symbol_root_complete() {
+    Logf("symbol root complete");
     for (size_t j = 0; j < gExchanges.size(); ++j) {
         g_req_exchanges.push(gExchanges[j]);
     }
@@ -1132,15 +1133,15 @@ void mdc_dump_symbol(struct m2_head* h, struct m2sv_symbol* p) {
         txstr(rec->symbol, symbol, 24);
         char name[49];
         txstr(rec->name, name, 48);
-        char kind[13];
-        txstr(rec->kind, kind, 12);
+        char root[13];
+        txstr(rec->root, root, 12);
         char strikep[13];
         txstr(rec->strike_price, strikep, 12);
         char scale[73];
         txstr(rec->scale, scale, 72);
-        Logf("  |%s symbol=%s, name=%s, kind=%d, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
+        Logf("  |%s symbol=%s, name=%s, root=%d, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
             fmt_plain_head(h),
-            symbol, name, kind,
+            symbol, name, root,
             bcd32(rec->duemon),
             bcd32(rec->native_duemon),
             bcd32(rec->start_date),
@@ -1232,7 +1233,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         struct SymbolInfo* si = make_symbol(symbol, exchange);
         if (si) {
             txstr(rec->name, si->name, 48);
-            txstr(rec->kind, si->root, 12);
+            txstr(rec->root, si->root, 12);
             si->duemon = bcd32(rec->duemon);
             si->native_duemon = bcd32(rec->native_duemon);
             si->start_date = bcd32(rec->start_date);
@@ -1885,7 +1886,7 @@ void dump_symbol_root(struct m2sv_symbol_root* p) {
     }
 }
 
-int mdc_parse_symbol_kind(const char* buf, size_t sz) {
+int mdc_parse_symbol_root(const char* buf, size_t sz) {
     struct m2sv_symbol_root* p = (struct m2sv_symbol_root*)buf;
     if (g_plain) {
         dump_symbol_root(p);
@@ -1933,7 +1934,7 @@ int mdc_parse_symbol_kind(const char* buf, size_t sz) {
             mdc_req_symbol_root(nextExchange.c_str());
         }
         else {
-            on_symbol_kind_complete();
+            on_symbol_root_complete();
         }
     }
     return 0;
@@ -1979,7 +1980,7 @@ int mdc_select(char* buf, size_t sz) {
         mdc_parse_message(buf, sz);
         break;
     case 6:
-        mdc_parse_symbol_kind(buf, sz);
+        mdc_parse_symbol_root(buf, sz);
         break;
     case 51:
         if (g_plain) {
@@ -2001,7 +2002,7 @@ int mdc_select(char* buf, size_t sz) {
         break;
     case 56:
         if (g_plain) {
-            dump_symbol_root_request((struct m2cl_symbol_kind*)buf);
+            dump_symbol_root_request((struct m2cl_symbol_root*)buf);
         }
         Logf("client symbol group request");
         break;
