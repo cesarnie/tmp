@@ -189,7 +189,7 @@ struct m2sv_message {
     char tail[10000];    //
 };
 
-struct m2_symbol_group_rec {
+struct m2_symbol_root_rec {
     char group_code[24];             //
     char group_name[48];             //
     char sessions[256];              //
@@ -209,12 +209,12 @@ struct m2_symbol_group_rec {
     char extension;                  //
 };
 
-struct m2sv_symbol_group {
+struct m2sv_symbol_root {
     struct m2_head head; //
     char result;         // 'Y'成功; 'N':失敗; 'L':成功最後一包
     char exchange[12];   //
     char cnt[2];         // max 200
-    char tail[200 * sizeof(struct m2_symbol_group_rec)];
+    char tail[200 * sizeof(struct m2_symbol_root_rec)];
 };
 
 #pragma pack()

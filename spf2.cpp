@@ -836,13 +836,13 @@ int mdc_req_mktdata(char cmd, int feedid, int64_t seqno) {
     return 0;
 }
 
-void dump_symbol_kind_request(struct m2cl_symbol_kind* p) {
+void dump_symbol_root_request(struct m2cl_symbol_kind* p) {
     char exchange[13];
     txstr(p->exchange, exchange, 12);
     Logf("%s req symbol kind: exchange=%s", fmt_plain_head(&p->head), exchange);
 }
 
-int mdc_req_symbol_kind(const char* exchange) {
+int mdc_req_symbol_root(const char* exchange) {
     struct m2cl_symbol_kind p;
     p.head.begin = 0xff;
     int64_to_bcd(56, p.head.fmt, 1);
@@ -855,7 +855,7 @@ int mdc_req_symbol_kind(const char* exchange) {
     sprintf(p.exchange, "%-*s", (int)sizeof(p.exchange), exchange);
 
     mdc_send((char*)&p, sizeof(p));
-    dump_symbol_kind_request(&p);
+    dump_symbol_root_request(&p);
     return 0;
 }
 
@@ -1031,7 +1031,7 @@ void on_login_ok() {
     if (g_req_exchanges.size() > 0) {
         std::string exchange = g_req_exchanges.front();
         g_req_exchanges.pop();
-        mdc_req_symbol_kind(exchange.c_str());
+        mdc_req_symbol_root(exchange.c_str());
     }
 }
 int mdc_parse_login(const char* buf, size_t sz) {
@@ -1847,14 +1847,14 @@ int mdc_parse_message(const char* buf, size_t sz) {
     return 0;
 }
 
-void dump_symbol_group(struct m2sv_symbol_group* p) {
+void dump_symbol_root(struct m2sv_symbol_root* p) {
     char exchange[13];
     txstr(p->exchange, exchange, 12);
     int cnt = bcd32(p->cnt);
     Logf("%s symbolgrp: result=%c, exchange=%s, cnt=%d",
         fmt_plain_head(&p->head), p->result, exchange, cnt);
     int i;
-    struct m2_symbol_group_rec* rec = (struct m2_symbol_group_rec*)p->tail;
+    struct m2_symbol_root_rec* rec = (struct m2_symbol_root_rec*)p->tail;
     for (i = 0; i < cnt; ++i) {
         char grp[25];
         txstr(rec->group_code, grp, 24);
@@ -1886,9 +1886,9 @@ void dump_symbol_group(struct m2sv_symbol_group* p) {
 }
 
 int mdc_parse_symbol_kind(const char* buf, size_t sz) {
-    struct m2sv_symbol_group* p = (struct m2sv_symbol_group*)buf;
+    struct m2sv_symbol_root* p = (struct m2sv_symbol_root*)buf;
     if (g_plain) {
-        dump_symbol_group(p);
+        dump_symbol_root(p);
     }
     if (p->result == 'N') {
         Logf("symbol group reply is N");
@@ -1898,7 +1898,7 @@ int mdc_parse_symbol_kind(const char* buf, size_t sz) {
     txstr(p->exchange, exchange, 12);
     int cnt = bcd32(p->cnt);
     int i;
-    struct m2_symbol_group_rec* rec = (struct m2_symbol_group_rec*)p->tail;
+    struct m2_symbol_root_rec* rec = (struct m2_symbol_root_rec*)p->tail;
     for (i = 0; i < cnt; ++i) {
         char grp[25];
         txstr(rec->group_code, grp, 24);
@@ -1930,7 +1930,7 @@ int mdc_parse_symbol_kind(const char* buf, size_t sz) {
         if (g_req_exchanges.size() > 0) {
             std::string nextExchange = g_req_exchanges.front();
             g_req_exchanges.pop();
-            mdc_req_symbol_kind(nextExchange.c_str());
+            mdc_req_symbol_root(nextExchange.c_str());
         }
         else {
             on_symbol_kind_complete();
@@ -2001,7 +2001,7 @@ int mdc_select(char* buf, size_t sz) {
         break;
     case 56:
         if (g_plain) {
-            dump_symbol_kind_request((struct m2cl_symbol_kind*)buf);
+            dump_symbol_root_request((struct m2cl_symbol_kind*)buf);
         }
         Logf("client symbol group request");
         break;
