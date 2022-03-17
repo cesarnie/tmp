@@ -26,7 +26,7 @@
 #include "fmtjson.h"
 #include "spf2.h"
 
-#define SPF2_VER "0.0.2"
+#define SPF2_VER "0.0.3"
 #define MAX_URL_LEN 256
 
 #define si2midx(x) ((x) - (gsm->symbols))
@@ -66,6 +66,7 @@ FILE* g_in_fh = NULL;
 simap_t g_simap; // index for symbols
 simap_t g_srmap; // index for symbol group
 simap_t g_subtbl;                                     // key=exchage;symbolroot;month;type
+simap_t g_exchg2feed_map;                             // exchange to feed id map
 s2smap_t g_THostMap;                                  //key: CME;CL.2103   value: CL.2103
 simap_t g_THostSet;                                   //key: CME;S.2010    value: 0: no symbol received, 1: received symbol, value is a future as T Host
 simap_t gSymbol2CategoryMap;                          // category is Sinopac specific classification
@@ -1011,6 +1012,7 @@ int mdc_parse_heartbeat(const char* buf, size_t sz) {
 
 void on_symbol_complete() {
     Logf("symbol complete");
+    mdc_req_mktdata('S', 4, 0);
 }
 
 void on_symbol_root_complete() {
@@ -1068,6 +1070,12 @@ int mdc_parse_login(const char* buf, size_t sz) {
             char exchange[13];
             txstr(rec->exchange, exchange, 12);
             int feedid = bcd32(rec->feed_id);
+
+            simap_t::iterator fi = g_exchg2feed_map.find(exchange);
+            if (fi == g_exchg2feed_map.end()) {
+                g_exchg2feed_map[exchange] = feedid;
+            }
+
             Logf("  |ID=%d, fg=0x%02x, exchange=%s", feedid, (uint8_t)rec->feed_type, exchange);
             rec++;
         }
@@ -1139,7 +1147,7 @@ void mdc_dump_symbol(struct m2_head* h, struct m2sv_symbol* p) {
         txstr(rec->strike_price, strikep, 12);
         char scale[73];
         txstr(rec->scale, scale, 72);
-        Logf("  |%s symbol=%s, name=%s, root=%d, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
+        Logf("  |%s symbol=%s, name=%s, root=%s, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
             fmt_plain_head(h),
             symbol, name, root,
             bcd32(rec->duemon),
@@ -1232,6 +1240,10 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         txstr(rec->symbol, symbol, 24);
         struct SymbolInfo* si = make_symbol(symbol, exchange);
         if (si) {
+            simap_t::iterator efi = g_exchg2feed_map.find(exchange);
+            if (efi != g_exchg2feed_map.end()) {
+                si->feedID = efi->second;
+            }
             txstr(rec->name, si->name, 48);
             txstr(rec->root, si->root, 12);
             si->duemon = bcd32(rec->duemon);

@@ -75,6 +75,7 @@ struct SymbolInfo {
     int64_t high;            //
     int64_t low;             //
     uint8_t category_id;     // 100: 現貨
+    int feedID;              //
 };
 
 struct SymbolRootInfo {
