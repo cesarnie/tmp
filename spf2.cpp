@@ -26,7 +26,7 @@
 #include "fmtjson.h"
 #include "spf2.h"
 
-#define SPF2_VER "0.0.3"
+#define SPF2_VER "0.0.4"
 #define MAX_URL_LEN 256
 
 #define si2midx(x) ((x) - (gsm->symbols))
@@ -38,8 +38,8 @@
 #define IS_FUTURE(x) (((x)&0x30) == 0x30)
 #define IS_OPTION(x) (((x)&0x40) == 0x40)
 #define IS_SPREAD(x) ((x)&0x04)
-#define fchanged(p, mask) ((((*((uint8_t*)p->exist_fg)) & (mask)) == (mask)) && (((*((uint8_t*)p->update_fg)) & (mask)) == (mask)))
-#define fexist(p, mask) (((*((uint8_t*)p->exist_fg)) & (mask)) == (mask))
+//#define fchanged(p, mask) ((((*((uint8_t*)p->exist_fg)) & (mask)) == (mask)) && (((*((uint8_t*)p->update_fg)) & (mask)) == (mask)))
+//#define fexist(p, mask) (((*((uint8_t*)p->exist_fg)) & (mask)) == (mask))
 #define TRADE_CLEAR 0
 #define TRADE_OPEN 2
 #define TRADE_CLOSE 7
@@ -1543,6 +1543,18 @@ void fill_timestamp(int ymd, int64_t hmsffff, char* buf, int buflen) {
         (hmsffff % 10000) / 10);
 }
 
+int fexist(struct m2_quote* q, int mask) {
+    return (*(uint16_t*)q->exist_fg) & (mask << 8 | mask >> 8);
+}
+
+int fupdated(struct m2_quote* q, int mask) {
+    return (*(uint16_t*)q->update_fg) & (mask << 8 | mask >> 8);
+}
+
+int fchanged(struct m2_quote* q, int mask) {
+    return fexist(q, mask) && fupdated(q, mask);
+}
+
 int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
     if (si->session_status == -1) {
         if (fexist(p, QM_SESSION_STATUS)) {
@@ -1690,9 +1702,10 @@ int mdc_parse_tick_ext(struct m2_tick_ext* t) {
 }
 
 void dump_quote(struct m2_head* h, struct m2_quote* q) {
-    Logf("  |%s quote: existfg=%02x, updatefg=%02x, sessionstatus=%d, sessiontype=%d, tradedt=%d, risel=%ld, falll=%ld, openref=%ld, close=%ld, settle=%ld, prevclose=%ld, prevsettle=%ld, prevoi=%ld, open=%ld, high=%ld, low=%ld",
+    Logf("  |%s quote: existfg=0x%02x%02x, updatefg=0x%02x%02x, sessionstatus=%d, sessiontype=%d, tradedt=%d, risel=%ld, falll=%ld, openref=%ld, close=%ld, settle=%ld, prevclose=%ld, prevsettle=%ld, prevoi=%ld, open=%ld, high=%ld, low=%ld",
         fmt_plain_head(h),
-        bcd32(q->exist_fg), bcd32(q->update_fg),
+        (uint8_t)q->exist_fg[0], (uint8_t)q->exist_fg[1],
+        (uint8_t)q->update_fg[0], (uint8_t)q->update_fg[1],
         bcd32(q->trade_session_status),
         bcd32(q->trade_session_type),
         bcd32(q->trade_date),
@@ -1725,23 +1738,27 @@ void dump_tick(struct m2_head* h, struct m2_tick* t) {
 void dump_tick_ext(struct m2_head* h, struct m2_tick_ext* t) {
     dump_tick(h, (struct m2_tick*)t);
     Logf("  |%s tickext: open=%ld, high=%ld, low=%ld",
+        fmt_plain_head(h),
         sbcd64(t->open), sbcd64(t->high), sbcd64(t->low));
 }
 
 void dump_ba(struct m2_head* h, struct m2_ba* b) {
     int depth = bcd32(b->depth);
-    Logf("%s ba: date=%d, time=%ld, depth=%d",
+    Logf("  |%s ba: date=%d, time=%ld, depth=%d",
         fmt_plain_head(h),
         bcd32(b->date), bcd64(b->time), depth);
-    struct m2_pv* rec;
+    struct m2_pv* rec = (struct m2_pv*)b->tail;
     int i;
-    struct m2_pv* bidpv = (struct m2_pv*)b->tail;
+    struct m2_pv* bidpv = rec;
     struct m2_pv* askpv = bidpv + 1;
     for (i = 0; i < depth; ++i) {
-        Logf("  |%s ba%d: bid=(%ld, %d), ask=(%ld, %d)",
+        Logf("    |%s ba%d: bid=(%ld, %d), ask=(%ld, %d)",
             fmt_plain_head(h), i,
             sbcd64(bidpv->price), bcd32(bidpv->vol),
             sbcd64(askpv->price), bcd32(askpv->vol));
+        rec += 2;
+        bidpv = rec;
+        askpv = bidpv + 1;
     }
 }
 
@@ -1799,7 +1816,9 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
     }
     int pricedec = bcd32(p->decimals);
     if (si->decimals != pricedec) {
-        Logf("err: tick decimals=%d differs from symbol decimals=%d", pricedec, si->decimals);
+        Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
+            si->symbol, pricedec, si->decimals);
+        si->decimals = pricedec;
         return 0;
     }
 
@@ -2199,6 +2218,9 @@ void read_exchanges_list() {
     }
     while (fgets(line, 64, fp) != NULL) {
         ctrim(line);
+        if (line[0] == '#') {
+            continue;
+        }
         gExchanges.push_back(line);
     }
     fclose(fp);

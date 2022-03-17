@@ -38,4 +38,6 @@ subscribe symbol
     sinopac specific indexes
 2022/3/8
     read symbols to request from ftpdata
-
+2022/3/17
+    parse market data protocol
+    
