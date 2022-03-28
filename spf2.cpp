@@ -2622,6 +2622,18 @@ void read_exchanges_list() {
     fclose(fp);
 }
 
+void print_subscribe_table() {
+    FILE* pf = fopen("subtbl.txt", "w+t");
+    if (pf == NULL) {
+        return;
+    }
+    simap_t::iterator fi = g_subtbl.begin();
+    for (; fi != g_subtbl.end(); fi++) {
+        fprintf(pf, "%s: %d\n", fi->first.c_str(), fi->second);
+    }
+    fclose(pf);
+}
+
 int main(int argc, char** argv) {
     strcpy(g_cfg_fn, "default.config");
     read_args(argc, argv);
@@ -2644,6 +2656,7 @@ int main(int argc, char** argv) {
     sprintf(fn, "%s/MHSMB.TXT", gFtpPath);
     LoadMonthTable('o', fn);
     LoadSubscribeTableAPEXHSTB();
+    print_subscribe_table();
 
     ringbuf_t g_ring;
     ring_init(1024 * 1024, &g_ring);
