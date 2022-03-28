@@ -42,7 +42,8 @@ struct SymbolInfo {
     char symbol[25];
     char name[49];
     char exchange[13];
-    char root[13];
+    char root_ext[13]; //EW(週期貨)在這裡會被換成ES，原來的EW會放在original_root
+    char root[13];     //EW
     unsigned char decimals;
     char type_fg;
     int duemon;        //yyyymm
@@ -57,8 +58,10 @@ struct SymbolInfo {
     char strike_price[13];
     char extra_fg;
     char scale[73];
+    int tick_ymd;
+    uint32_t tick_hmsf;
     int ba_ymd;
-    int ba_hmsf;
+    uint32_t ba_hmsf;
     struct pv bid[20];
     struct pv ask[20];
     int session_status;      //
@@ -74,7 +77,22 @@ struct SymbolInfo {
     int64_t open;            //
     int64_t high;            //
     int64_t low;             //
-    uint8_t category_id;     // 100: 現貨
+    int32_t tick_vol;        //
+    int64_t tot_vol;         //
+    double tick_value;       //
+    double tot_value;        //
+    int64_t balance;         // 合约持仓量
+    int64_t oi;              // 当前未平仓量
+    char price_offset;       // 价位于委托簿位置
+    char trade_status;       // 交易狀態
+    uint8_t category_id;     // 100: 現貨, data comes from APEXHSTB
+    uint8_t is_farmonth;
+    uint8_t is_subscribed;
+    char far_alias[25];
+    int far_alias_midx;
+    uint8_t is_nearmonth;
+    char near_alias[25];
+    int near_alias_midx;
     int feedID;              //
 };
 
@@ -96,7 +114,7 @@ struct SymbolRootInfo {
     int lot_size;                //
     char category;               //
     int timezone;                //
-    uint8_t extension;           //
+    char extension;              //
 };
 
 struct Spf2Shm {

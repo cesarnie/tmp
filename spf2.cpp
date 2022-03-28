@@ -26,18 +26,19 @@
 #include "fmtjson.h"
 #include "spf2.h"
 
-#define SPF2_VER "0.0.4"
+#define SPF2_VER "0.0.5"
 #define MAX_URL_LEN 256
 
 #define si2midx(x) ((x) - (gsm->symbols))
 #define sr2midx(x) ((x) - (gsm->roots))
-#define IS_SPOT(x) ((x) == (0x20))
-#define IS_STOCK(x) ((x) == (0x20))
-#define IS_WARRANT(x) ((x) == (0x21))
-#define IS_INDEX(x) ((x) == (0x10))
-#define IS_FUTURE(x) (((x)&0x30) == 0x30)
-#define IS_OPTION(x) (((x)&0x40) == 0x40)
-#define IS_SPREAD(x) ((x)&0x04)
+#define IS_SPOT(x) (((x)->type_fg) == (0x20))
+#define IS_STOCK(x) (((x)->type_fg) == (0x20))
+#define IS_WARRANT(x) (((x)->type_fg) == (0x21))
+#define IS_INDEX(x) (((x)->type_fg) == (0x10))
+#define IS_FUTURE(x) ((((x)->type_fg) & 0x30) == 0x30)
+#define IS_OPTION(x) ((((x)->type_fg) & 0x40) == 0x40)
+#define IS_SPREAD(x) (((x)->extra_fg) & 0x04)
+
 //#define fchanged(p, mask) ((((*((uint8_t*)p->exist_fg)) & (mask)) == (mask)) && (((*((uint8_t*)p->update_fg)) & (mask)) == (mask)))
 //#define fexist(p, mask) (((*((uint8_t*)p->exist_fg)) & (mask)) == (mask))
 #define TRADE_CLEAR 0
@@ -63,21 +64,21 @@ char gFtpPath[200];
 char g_cfg_fn[MAX_URL_LEN];
 FILE* g_sav_fh = NULL;
 FILE* g_in_fh = NULL;
-simap_t g_simap; // index for symbols
-simap_t g_srmap; // index for symbol group
-simap_t g_subtbl;                                     // key=exchage;symbolroot;month;type
+simap_t g_simap;                                      // index for symbols
+simap_t g_srmap;                                      // index for symbol group
+simap_t g_subtbl;                                     // key=exchage;symbolroot;month;type(f/o)
 simap_t g_exchg2feed_map;                             // exchange to feed id map
-s2smap_t g_THostMap;                                  //key: CME;CL.2103   value: CL.2103
-simap_t g_THostSet;                                   //key: CME;S.2010    value: 0: no symbol received, 1: received symbol, value is a future as T Host
-simap_t gSymbol2CategoryMap;                          // category is Sinopac specific classification
+s2smap_t g_THostMap;                                  // key: CME;CL.2103   value: CL.2103
+simap_t g_THostSet;                                   // key: CME;S.2010    value: 0: no symbol received, 1: received symbol, value is a future as T Host
+simap_t gSymbol2CategoryMap;                          // category is Sinopac specific classification, CME;EW;f/o --> 1  (農產品,金屬,能源...)
 s2spairmap_t g_fut_to_spot_map;                       // key="SMX;TWN", value=spot symbol/name pair
-std::map<std::string, struct MonthsTable*> gMonTable; //key:"o;CMX;AABC", source:GWHSTM.TXT , first item: o/f
+std::map<std::string, struct MonthsTable*> gMonTable; // key:"o;CMX;AABC", source:GWHSTM.TXT , first item: o/f
 simap_t gCurrMonthMap;                                // key is "exchange;commodity root", source: GWHSTM.TXT
-simap_t gFarMonthMap;
-std::vector<std::string> gExchanges;
-std::queue<std::string> g_req_exchanges;
-char g_ibuf[MDC_MAX_SZ];
-s2smap_t gAlterCommrootMap;
+simap_t gFarMonthMap;                                 //
+std::vector<std::string> gExchanges;                  //
+std::queue<std::string> g_req_exchanges;              //
+char g_ibuf[MDC_MAX_SZ];                              //
+s2smap_t gAlterCommrootMap;                           //CME;EW;f/o --> ES, 用來map周期貨/選擇權到實際的月商品代碼
 
 static unsigned long dec_tbl[] = {
     1,
@@ -142,13 +143,12 @@ void destroy_app() {
 
 int isSubscribed(struct SymbolInfo* si) {
     char key[128];
-    char abbr[64];
-    sprintf(abbr, "%s", si->root);
+    char* abbr = si->root;
     char commtype = 's';
-    if (IS_FUTURE(si->type_fg)) {
+    if (IS_FUTURE(si)) {
         commtype = 'f';
     }
-    else if (IS_OPTION(si->type_fg)) {
+    else if (IS_OPTION(si)) {
         commtype = 'o';
     }
     sprintf(key, "%s;%s;%c", si->exchange, abbr, commtype);
@@ -159,7 +159,7 @@ int isSubscribed(struct SymbolInfo* si) {
     //    }
     //}
     //bm
-    if (IS_SPREAD(si->extra_fg)) {
+    if (IS_SPREAD(si)) {
         char* tok;
         char fullsymb[64];
         strcpy(fullsymb, si->symbol);
@@ -200,21 +200,21 @@ int isSubscribed(struct SymbolInfo* si) {
             return 0;
         }
     }
-    else if (IS_FUTURE(si->type_fg)) {
+    else if (IS_FUTURE(si)) {
         sprintf(key, "%s;%s;%d;f", si->exchange, abbr, si->duemon);
         simap_t::iterator finditer = g_subtbl.find(key);
         if (finditer == g_subtbl.end()) {
             return 0;
         }
     }
-    else if (IS_OPTION(si->type_fg)) {
+    else if (IS_OPTION(si)) {
         sprintf(key, "%s;%s;%d;o", si->exchange, abbr, si->duemon);
         simap_t::iterator finditer = g_subtbl.find(key);
         if (finditer == g_subtbl.end()) {
             return 0;
         }
     }
-    else if (IS_INDEX(si->type_fg)) {
+    else if (IS_INDEX(si)) {
         sprintf(key, "%s;%s;%d;s", si->exchange, abbr, 999999);
         simap_t::iterator finditer = g_subtbl.find(key);
         if (finditer == g_subtbl.end()) {
@@ -267,6 +267,8 @@ void addCurrentMonthEntry(const char* exchgcomm, int deliveryYM) {
     }
 }
 
+//CBT;C     ;202112;20210629;20211214;20211110;20211214;20211127  (GWHSTM.TXT)
+//CBT;S     ;202204;20210428;20220325;20220325;20220325;20220326;1CBTS     ;202205  (MHSMB.TXT)
 void LoadMonthTable(char sectype, const char* fn) {
     FILE* pf = fopen(fn, "rt");
     if (pf == NULL) {
@@ -293,14 +295,14 @@ void LoadMonthTable(char sectype, const char* fn) {
             linebuf[linesz - 1] = '\0';
         }
         char* tok;
-        tok = strtok(linebuf, ";");
+        tok = strtok(linebuf, ";"); //CBT
         if (tok != NULL) {
             strcpy(exchgbuf, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //C
         if (tok != NULL) {
             strcpy(commrootbuf, tok);
             ctrim(commrootbuf);
@@ -308,7 +310,7 @@ void LoadMonthTable(char sectype, const char* fn) {
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //202112
         if (tok != NULL) {
             strcpy(deliveryYM, tok);
             ctrim(deliveryYM);
@@ -350,7 +352,7 @@ void LoadMonthTable(char sectype, const char* fn) {
             if (tok == NULL) {
                 continue;
             }
-            tok = strtok(NULL, ";");
+            tok = strtok(NULL, ";"); //1CBTTY
             if (tok == NULL) {
                 continue;
             }
@@ -361,7 +363,7 @@ void LoadMonthTable(char sectype, const char* fn) {
                 strncpy(optMapFut, tmpOptMapFut + 4, tmpOptMapFutLen - 4);
                 optMapFut[tmpOptMapFutLen - 4] = 0;
             }
-            tok = strtok(NULL, ";");
+            tok = strtok(NULL, ";"); //202112
             if (tok == NULL) {
                 continue;
             }
@@ -374,15 +376,15 @@ void LoadMonthTable(char sectype, const char* fn) {
         sprintf(typecommroot, "%c;%s;%s", sectype, exchgbuf, commrootbuf);
         int deliveryYMInt = atoi(deliveryYM);
         addMonsTableYMEntry(typecommroot, deliveryYMInt);
-        char commroot[100];
+        char commroot[100]; //CME;ES
         sprintf(commroot, "%s;%s", exchgbuf, commrootbuf);
         if (sectype == 'f') {
             addCurrentMonthEntry(commroot, deliveryYMInt);
         }
         else if (sectype == 'o') {
-            char thoststr[64];
+            char thoststr[64]; //ES.yymm
             sprintf(thoststr, "%s.%s", optMapFut, optMapFutDueMonStr + 2);
-            char thostkey[128];
+            char thostkey[128]; //CME;ES;2207
             sprintf(thostkey, "%s.%d", commroot, deliveryYMInt % 10000);
             g_THostMap[thostkey] = thoststr;
             char tmpbuf2[100];
@@ -466,6 +468,7 @@ void LoadSpotTxt(const char* fn) {
     fclose(pf);
 }
 
+//2;CME;EW    ;Mini S&P月底選擇權;EWE         ;USD;1;1CMEES    ;CMEEI
 void LoadSubscribeTableAPEXHSTB() {
     char fn[300];
     sprintf(fn, "%s/APEXHSTB.TXT", gFtpPath);
@@ -494,7 +497,7 @@ void LoadSubscribeTableAPEXHSTB() {
             linebuf[linesz - 1] = '\0';
         }
         char* tok;
-        tok = strtok(linebuf, ";");
+        tok = strtok(linebuf, ";"); //2
         if (tok != NULL) {
             strcpy(commtype, tok);
             ctrim(commtype);
@@ -508,14 +511,14 @@ void LoadSubscribeTableAPEXHSTB() {
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //CME
         if (tok != NULL) {
             strcpy(exchgbuf, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //EW
         if (tok != NULL) {
             strcpy(commrootbuf, tok);
             ctrim(commrootbuf);
@@ -523,35 +526,35 @@ void LoadSubscribeTableAPEXHSTB() {
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //Mini S&P月底選擇權
         if (tok != NULL) {
             strcpy(chtname, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //EWE
         if (tok != NULL) {
             strcpy(unknown1, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //USD
         if (tok != NULL) {
             strcpy(currency, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //1
         if (tok != NULL) {
             strcpy(commcategory, tok);
         }
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //1CMEES
         if (tok != NULL) {
             strcpy(alter_commroot, tok);
             ctrim(alter_commroot); 
@@ -559,7 +562,7 @@ void LoadSubscribeTableAPEXHSTB() {
         else {
             continue;
         }
-        tok = strtok(NULL, ";");
+        tok = strtok(NULL, ";"); //CMEEI
         if (tok != NULL) {
             strcpy(sessiontype, tok);
             ctrim(sessiontype);
@@ -1010,8 +1013,463 @@ int mdc_parse_heartbeat(const char* buf, size_t sz) {
     return 0;
 }
 
+struct SymbolRootInfo* get_commroot_info(const char* root, const char* exchange) {
+    char rootkey[36];
+    sprintf(rootkey, "%s;%s", exchange, root);
+    simap_t::iterator it = g_srmap.find(rootkey);
+    if (it != g_srmap.end()) {
+        return gsm->roots + it->second;
+    }
+    return NULL;
+}
+
+const char* getCategoryNameById(int id) {
+    switch (id) {
+    case 1:
+        return "指數";
+    case 2:
+        return "利率";
+    case 3:
+        return "匯率";
+    case 4:
+        return "債券";
+    case 5:
+        return "個股";
+    case 6:
+        return "農產品";
+    case 7:
+        return "金屬";
+    case 8:
+        return "能源";
+    case 9:
+        return "其他";
+    case 100:
+        return "現貨";
+    }
+    return "未歸類";
+}
+
+const char* convert_to_apex_symbol_type(char fg) {
+    switch (fg) {
+    case 0x10: // index
+        return "IX";
+    case 0x20: // common stock
+        return "CS";
+    case 0x21: // warrant
+        return "WR";
+    case 0x30: // commodity future
+        return "CF";
+    case 0x31: // index future
+        return "NF";
+    case 0x32: // stock future
+        return "SF";
+    case 0x33: // interest future
+        return "IF";
+    case 0x34: // bond future
+        return "BF";
+    case 0x35: // currency future
+        return "XF";
+    case 0x40: // index option
+        return "NO";
+    case 0x41: // stock option
+        return "SO";
+    case 0x42: // future  option
+        return "FO";
+    case 0x43: // bond option
+        return "BO";
+    case 0x44: // currency option
+        return "XO";
+    case 0x45: // interest option
+        return "IO";
+    }
+    return "  ";
+}
+
+const char* ConvertToMIC(const char* exchg) {
+    return exchg;
+}
+
+void FillTimeString(char* buf, int buflen) {
+    time_t t0 = time(NULL);
+    struct tm* t1 = localtime(&t0);
+    strftime(buf, buflen, "%Y%m%d_%H:%M:%S.000", t1);
+}
+
+void convertOptionCode(const char* c0, char* c1) {
+    const char* dashPos = strchr(c0, '/');
+    if (dashPos == NULL) {
+        strcpy(c1, c0);
+        return;
+    }
+    char left[20];
+    char right[20];
+    char commroot[20];
+    strncpy(left, c0, dashPos - c0); // YM.1903
+    left[dashPos - c0] = '\0';
+    strncpy(right, dashPos + 1, 19); // 1906
+
+    dashPos = strchr(c0, '.');
+    if (dashPos == NULL) {
+        strcpy(c1, c0);
+        return;
+    }
+    strncpy(commroot, c0, dashPos - c0);
+    commroot[dashPos - c0] = '\0';
+    sprintf(c1, "%s/%s.%s", left, commroot, right);
+}
+
+void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue) {
+    ue->Mode = 57;
+    ue->Version = 0;
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+    strcpy(ue->FilterCol, "SYMBO");
+    sprintf(ue->FilterVal, "%s.%s", newSymbolCode, "US");
+    FillTimeString(ue->EventTime, JsonValLen);
+    ue->EventType = 4;
+    int cidx = 0;
+    strcpy(ue->ColList[cidx].ColName, "527"); // country
+    strcpy(ue->ColList[cidx].ColVal, "US");
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "17"); // exchangecode
+    strcpy(ue->ColList[cidx].ColVal, ConvertToMIC(si->exchange));
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "48"); // symbol
+    sprintf(ue->ColList[cidx].ColVal, "%s.%s", newSymbolCode, "US");
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "RegularizeCode");
+    sprintf(ue->ColList[cidx].ColVal, "%s.%s", newSymbolCode, "US");
+    ++cidx;
+
+    strcpy(ue->ColList[cidx].ColName, "20113"); // decimals
+    sprintf(ue->ColList[cidx].ColVal, "%d", si->decimals);
+    ++cidx;
+
+    const char* category = convert_to_apex_symbol_type(si->type_fg);
+
+    strcpy(ue->ColList[cidx].ColName, "1151"); // type
+    sprintf(ue->ColList[cidx].ColVal, "%c", category[1]);
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "55"); // engname
+    ue->ColList[cidx].ColVal[0] = '\0';
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "30153"); // chtname
+    sprintf(ue->ColList[cidx].ColVal, "%s", si->name);
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "62"); // expire
+
+    struct tm t2;
+    t2.tm_sec = 0;
+    t2.tm_min = 0;
+    t2.tm_hour = 6;
+    t2.tm_mday = si->end_date % 100;
+    t2.tm_mon = ((si->end_date / 100) % 100) - 1;
+    t2.tm_year = si->end_date / 10000 - 1900;
+    time_t t3 = mktime(&t2);
+    time_t t4 = t3 + 24 * 3600;
+    struct tm* t5 = localtime(&t4);
+
+    strftime(ue->ColList[cidx].ColVal, JsonValLen, "%Y%m%d_%H:%M:%S.000", t5);
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "200"); // mature month
+    sprintf(ue->ColList[cidx].ColVal, "%d", si->duemon);
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "205"); // mature date
+    sprintf(ue->ColList[cidx].ColVal, "%02d", si->settle_date % 100);
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "1227");
+
+    char exchgcomm[64];
+    sprintf(exchgcomm, "%s;%s", si->exchange, si->root);
+    strcpy(ue->ColList[cidx].ColVal, getCategoryNameById(si->category_id));
+    ++cidx;
+    if (IS_OPTION(si)) {
+        strcpy(ue->ColList[cidx].ColName, "201");
+        if (si->extra_fg & 0x01) {
+            strcpy(ue->ColList[cidx].ColVal, "C");
+        }
+        else if (si->extra_fg & 0x02) {
+            strcpy(ue->ColList[cidx].ColVal, "P");
+        }
+        ++cidx;
+        strcpy(ue->ColList[cidx].ColName, "202");
+
+        sprintf(ue->ColList[cidx].ColVal, "%s", si->strike_price);
+        ++cidx;
+        strcpy(ue->ColList[cidx].ColName, "20114"); // strike price decimals
+        sprintf(ue->ColList[cidx].ColVal, "%d", 0);
+        ++cidx;
+        strcpy(ue->ColList[cidx].ColName, "12024");
+        sprintf(ue->ColList[cidx].ColVal, "%s", si->root_ext);
+        ++cidx;
+
+        strcpy(ue->ColList[cidx].ColName, "12026");
+        sprintf(ue->ColList[cidx].ColVal, "%s.%d", si->root_ext, si->duemon % 10000);
+        ++cidx;
+
+        strcpy(ue->ColList[cidx].ColName, "20112");
+        std::string thost;
+        char findkey[128];
+        sprintf(findkey, "%s.%04d", exchgcomm, si->duemon % 10000);
+        std::map<std::string, std::string>::iterator fiter = g_THostMap.find(findkey);
+        if (fiter != g_THostMap.end()) {
+            thost = fiter->second;
+        }
+        else {
+            Logf("thostmap for %s not found", findkey);
+        }
+        if (thost.size() == 0) {
+            ue->ColList[cidx].ColVal[0] = 0;
+        }
+        else {
+            sprintf(ue->ColList[cidx].ColVal, "%s.US", thost.c_str());
+        }
+        ++cidx;
+
+        strcpy(ue->ColList[cidx].ColName, "20122");
+        strcpy(ue->ColList[cidx].ColVal, "");
+        ++cidx;
+    }
+    if (IS_FUTURE(si)) {
+        strcpy(ue->ColList[cidx].ColName, "20122");
+        //todo
+        if (strlen(si->near_alias) > 0) {
+            sprintf(ue->ColList[cidx].ColVal, "%s.%s", si->near_alias, "US");
+        }
+        else if (strlen(si->far_alias) > 0) {
+            sprintf(ue->ColList[cidx].ColVal, "%s.%s", si->far_alias, "US");
+        }
+        else {
+            ue->ColList[cidx].ColVal[0] = '\0';
+        }
+        ++cidx;
+    }
+    if (IS_SPREAD(si)) {
+        struct SymbolRootInfo* pRoot = get_commroot_info(si->root_ext, si->exchange);
+        if (pRoot != NULL) {
+            strcpy(ue->ColList[cidx].ColName, "20123");
+            sprintf(ue->ColList[cidx].ColVal, "%d", (pRoot->extension) ? 1 : 0);
+            ++cidx;
+        }
+    }
+    strcpy(ue->ColList[cidx].ColName, "TM");
+    if (si->category_id == 100) {
+        sprintf(ue->ColList[cidx].ColVal, "%d", 0);
+    }
+    else {
+        sprintf(ue->ColList[cidx].ColVal, "%d", 1);
+    }
+    ++cidx;
+    strcpy(ue->ColList[cidx].ColName, "12032");
+    if (si->category_id == 100) {
+        sprintf(ue->ColList[cidx].ColVal, "%d", 0);
+    }
+    else {
+        sprintf(ue->ColList[cidx].ColVal, "%d", 1);
+    }
+    ++cidx;
+    ue->ColListCnt = cidx;
+}
+
+int emd_send(const char* buf, size_t len, int flags) {
+    /*
+    struct timespec tp;
+    if (bandwidth_control) {
+        clock_gettime(CLOCK_REALTIME, &tp);
+        double difft = diff_timespec(&bandwidth_timeout, &tp);
+        if (difft<0.0) {   // timeout
+            bandwidth_timeout.tv_sec++;
+            current_bandwidth = len;
+        }
+        else {   // not timeout
+            if (current_bandwidth<(max_kbytes_per_sec*1024)) {
+                current_bandwidth += len;
+            }
+            else {
+                struct timespec sleeptp;
+                sleeptp.tv_sec = 0;
+                sleeptp.tv_nsec = difft*1.0e9;
+                nanosleep(&sleeptp, NULL);
+                Logf("sleep %d nanoseconds", sleeptp.tv_nsec);
+                current_bandwidth = len;
+                bandwidth_timeout.tv_sec++;
+            }
+        }
+    }
+    */
+    int ret;
+    if (g_outfp) {
+        ret = fwrite(buf, 1, len, g_outfp);
+        ret += fwrite("\n", 1, 1, g_outfp);
+        fflush(g_outfp);
+    }
+    if (g_zout1 != NULL) {
+        ret = zmq_send(g_zout1, buf, len, flags);
+    }
+    if (g_zout2 != NULL) {
+        ret = zmq_send(g_zout2, buf, len, flags);
+    }
+    return ret;
+}
+
+int send_all_symbols(int sleepOnSz) {
+    size_t sendsz = 0;
+    size_t onesz = 0;
+    int flowctrl = 0;
+    size_t outsz;
+    char sendbuf[512];
+    int i;
+    for (i = 0; i < gsm->symbol_cnt; ++i) {
+        struct SymbolInfo* si = gsm->symbols + i;
+        if (!isSubscribed(si)) {
+            continue;
+        }
+        si->is_subscribed = 1;
+        Vip2UpdateEvent ue;
+        make_symbol_update_event(si, &ue);
+        char jsonbuf[2048];
+        int len = MakeJsonUpdateEvent(&ue, jsonbuf, 2048);
+        if (len > 0) {
+            outsz = sprintf(sendbuf, "V01$%s$A$UE$ALL", ue.ColList[1].ColVal);
+            emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+            emd_send(jsonbuf, len, 0);
+            onesz = outsz + len;
+        }
+        sendsz += onesz;
+        flowctrl += onesz;
+        if (sleepOnSz > 0 && flowctrl > sleepOnSz) {
+            flowctrl = 0;
+            struct timespec req;
+            req.tv_sec = 0;
+            req.tv_nsec = 100000000;
+            nanosleep(&req, NULL);
+        }
+    }
+    return sendsz;
+}
+
+// returns yyyymm
+int select_option_T_host(const char* exchgcomm, int deliveryYM) {
+    char futbuf[64];
+    sprintf(futbuf, "f;%s", exchgcomm);
+    MonthsTable* mtbl = getMonthsTableEntry(futbuf);
+    if (mtbl == NULL) {
+        return 0;
+    }
+    int resDeliveryYM = 0;
+    int i;
+    for (i = 0; i < mtbl->count; ++i) {
+        if (mtbl->mons[i] > deliveryYM) {
+            continue;
+        }
+        if (mtbl->mons[i] > resDeliveryYM) {
+            resDeliveryYM = mtbl->mons[i];
+        }
+    }
+    return resDeliveryYM;
+}
+
+struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
+    struct SymbolInfo* si = NULL;
+    simap_t::iterator iter = g_simap.find(symbol);
+    if (iter == g_simap.end()) {
+        si = alloc_symbol();
+        int midx = si2midx(si);
+        memset(si, 0x00, sizeof(struct SymbolInfo));
+        si->category_id = -1;
+        g_simap[symbol] = midx;
+        strcpy(si->symbol, symbol);
+        strcpy(si->exchange, exchange);
+        si->session_status = -1;
+        Logf("alloc symbol: %s", symbol);
+    }
+    else {
+        si = gsm->symbols + iter->second;
+    }
+    return si;
+}
+
 void on_symbol_complete() {
     Logf("symbol complete");
+    int i;
+    for (i = 0; i < gsm->symbol_cnt; ++i) {
+        struct SymbolInfo* si = gsm->symbols + i;
+        char typecode = ' ';
+        int typecode2 = 1;
+        if (IS_FUTURE(si)) {
+            typecode = 'f';
+        }
+        else if (IS_OPTION(si)) {
+            typecode = 'o';
+            typecode2 = 2;
+        }
+
+        //產生類別名稱
+        char exchgcomm[64];
+        sprintf(exchgcomm, "%s;%s", si->exchange, si->root_ext);
+        //todo
+        simap_t::iterator fiter = gFarMonthMap.find(exchgcomm);
+        if (fiter != gFarMonthMap.end()) {
+            if (IS_FUTURE(si) && !IS_SPREAD(si) && si->duemon == fiter->second) {
+                si->is_farmonth = 1;
+                char farSymbol[25];
+                sprintf(farSymbol, "%s.FF", si->root_ext);
+                struct SymbolInfo* siFar = make_symbol(farSymbol, si->exchange);
+                if (siFar) {
+                    memcpy(siFar, si, sizeof(struct SymbolInfo));
+                    strcpy(siFar->symbol, farSymbol);
+                    sprintf(si->far_alias, "%s", siFar->symbol);
+                    sprintf(siFar->far_alias, "%s", si->symbol);
+                    si->far_alias_midx = si2midx(siFar);
+                    siFar->far_alias_midx = si2midx(si);
+                }
+            }
+        }
+        fiter = gCurrMonthMap.find(exchgcomm);
+        // 產生近月商品代碼
+        if (fiter != gCurrMonthMap.end()) {
+            if (IS_FUTURE(si) && !IS_SPREAD(si) && si->duemon == fiter->second) {
+                si->is_nearmonth = 1;
+                char nearSymbol[25];
+                sprintf(nearSymbol, "%s.00", si->root_ext);
+                struct SymbolInfo* siNear = make_symbol(nearSymbol, si->exchange);
+                if (siNear) {
+                    memcpy(siNear, si, sizeof(struct SymbolInfo));
+                    sprintf(siNear->symbol, "%s.00", siNear->root_ext);
+                    sprintf(si->near_alias, "%s", siNear->symbol);
+                    sprintf(siNear->near_alias, "%s", si->symbol);
+                    si->near_alias_midx = si2midx(siNear);
+                    siNear->near_alias_midx = si2midx(si);
+                }
+            }
+        }
+    }
+    simap_t::iterator fi;
+    for (fi = g_THostSet.begin(); fi != g_THostSet.end(); fi++) {
+        if (fi->second != 0) {
+            continue;
+        }
+        char commroot[32];
+        char deliveryYMStr[32];
+        if (split_name_value_pair(fi->first.c_str(), commroot, deliveryYMStr, '.')) {
+            int thost = select_option_T_host(commroot, atol(deliveryYMStr) + 200000); //commroot: CME;S   deliveryYMInt:202010
+            if (thost > 0) {
+                char commcode[32];
+                char exchg[32];
+                if (split_name_value_pair(fi->first.c_str(), exchg, commcode, ';')) {
+                    g_THostMap[fi->first.c_str()] = commcode;
+                    Logf("option T host for %s is %s (second try)", fi->first.c_str(), commcode);
+                }
+            }
+            else {
+                Logf("option T host for %s is not found (symbol complete)", fi->first.c_str());
+            }
+        }
+    }
+
+    send_all_symbols(gSleepKB * 1024);
+    //todo: send scale
     mdc_req_mktdata('S', 4, 0);
 }
 
@@ -1087,25 +1545,6 @@ int mdc_parse_login(const char* buf, size_t sz) {
         exit(EXIT_FAILURE);
     }
     return 0;
-}
-
-struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
-    struct SymbolInfo* si = NULL;
-    simap_t::iterator iter = g_simap.find(symbol);
-    if (iter == g_simap.end()) {
-        si = alloc_symbol();
-        int midx = si2midx(si);
-        memset(si, 0x00, sizeof(struct SymbolInfo));
-        g_simap[symbol] = midx;
-        strcpy(si->symbol, symbol);
-        strcpy(si->exchange, exchange);
-        si->session_status = -1;
-        Logf("alloc symbol: %s", symbol);
-    }
-    else {
-        si = gsm->symbols + iter->second;
-    }
-    return si;
 }
 
 struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange) {
@@ -1184,40 +1623,39 @@ void addRemoteMonthEntry(const char* exchgcomm, int deliveryYM) {
     }
 }
 
-struct SymbolRootInfo* get_commroot_info(const char* root, const char* exchange) {
-    char rootkey[36];
-    sprintf(rootkey, "%s;%s", exchange, root);
-    simap_t::iterator it = g_srmap.find(rootkey);
-    if (it != g_srmap.end()) {
-        return gsm->roots + it->second;
+void add_spot_symbol(struct SymbolInfo* si) {
+    char findkey[64];
+    sprintf(findkey, "%s;%s", si->exchange, si->root_ext);
+    s2spairmap_t::iterator fsiter = g_fut_to_spot_map.find(findkey);
+    if (fsiter == g_fut_to_spot_map.end()) {
+        return;
     }
-    return NULL;
-}
+    Logf("%s found in fut_to_spot_map", findkey);
+    struct SymbolInfo* sNew = make_symbol(fsiter->second.str1.c_str(), si->exchange);
+    if (sNew == NULL) {
+        return;
+    }
+    memcpy(sNew, si, sizeof(struct SymbolInfo));
+    sNew->type_fg = 0x20;
+    strcpy(sNew->symbol, fsiter->second.str1.c_str());
+    strcpy(sNew->name, fsiter->second.str2.c_str());
+    strcpy(sNew->root_ext, fsiter->second.str1.c_str());
+    strcpy(sNew->root, si->root_ext);
+    Logf("add symbol %s, %s to map", fsiter->second.str1.c_str(), sNew->name);
 
-const char* getCategoryNameById(int id) {
-    switch (id) {
-    case 1:
-        return "指數";
-    case 2:
-        return "利率";
-    case 3:
-        return "匯率";
-    case 4:
-        return "債券";
-    case 5:
-        return "個股";
-    case 6:
-        return "農產品";
-    case 7:
-        return "金屬";
-    case 8:
-        return "能源";
-    case 9:
-        return "其他";
-    case 100:
-        return "現貨";
+    struct SymbolRootInfo* root0 = get_commroot_info(si->root_ext, si->exchange);
+    if (root0) {
+        struct SymbolRootInfo* newRoot = make_symbol_root(sNew->root_ext, sNew->exchange);
+        memcpy(newRoot, root0, sizeof(struct SymbolRootInfo));
+        strcpy(newRoot->exchange, sNew->exchange);
+        strcpy(newRoot->group_code, sNew->root_ext);
     }
-    return "未歸類";
+
+    char typeexchgcomm[200];
+    sprintf(typeexchgcomm, "%d;%s;%s", 0, sNew->exchange, sNew->root_ext);
+    gSymbol2CategoryMap[typeexchgcomm] = 100;
+
+    sNew->category_id = 100;
 }
 
 int mdc_parse_symbol(const char* buf, size_t sz) {
@@ -1239,73 +1677,65 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         char symbol[25];
         txstr(rec->symbol, symbol, 24);
         struct SymbolInfo* si = make_symbol(symbol, exchange);
-        if (si) {
-            simap_t::iterator efi = g_exchg2feed_map.find(exchange);
-            if (efi != g_exchg2feed_map.end()) {
-                si->feedID = efi->second;
-            }
-            txstr(rec->name, si->name, 48);
-            txstr(rec->root, si->root, 12);
-            si->duemon = bcd32(rec->duemon);
-            si->native_duemon = bcd32(rec->native_duemon);
-            si->start_date = bcd32(rec->start_date);
-            si->settle_date = bcd32(rec->settle_date);
-            si->first_notice_date = bcd32(rec->first_notice_date);
-            si->second_notice_date = bcd32(rec->second_notice_date);
-            si->end_date = bcd32(rec->end_date);
-            si->last_trade_date = bcd32(rec->last_trade_date);
-            si->type_fg = rec->type_fg;
-            si->lot_size = bcd32(rec->lot_size);
-            txstr(rec->strike_price, si->strike_price, sizeof(rec->strike_price));
-            si->extra_fg = rec->extra_fg;
-            txstr(rec->scale, si->scale, sizeof(rec->scale));
+        if (!si) {
+            continue;
+        }
+        simap_t::iterator efi = g_exchg2feed_map.find(exchange);
+        if (efi != g_exchg2feed_map.end()) {
+            si->feedID = efi->second;
+        }
+        txstr(rec->name, si->name, 48);
+        txstr(rec->root, si->root_ext, 12);
+        strcpy(si->root, si->root_ext);
+        si->duemon = bcd32(rec->duemon);
+        si->native_duemon = bcd32(rec->native_duemon);
+        si->start_date = bcd32(rec->start_date);
+        si->settle_date = bcd32(rec->settle_date);
+        si->first_notice_date = bcd32(rec->first_notice_date);
+        si->second_notice_date = bcd32(rec->second_notice_date);
+        si->end_date = bcd32(rec->end_date);
+        si->last_trade_date = bcd32(rec->last_trade_date);
+        si->type_fg = rec->type_fg;
+        si->lot_size = bcd32(rec->lot_size);
+        txstr(rec->strike_price, si->strike_price, sizeof(rec->strike_price));
+        si->extra_fg = rec->extra_fg;
+        txstr(rec->scale, si->scale, sizeof(rec->scale));
 
-            // create new symbol entry for spot index
-            char findkey[64];
-            sprintf(findkey, "%s;%s", si->exchange, si->root);
-            s2spairmap_t::iterator fsiter = g_fut_to_spot_map.find(findkey);
-            if (fsiter != g_fut_to_spot_map.end()) {
-                Logf("%s found in fut_to_spot_map", findkey);
-                simap_t::iterator sciter = g_simap.find(fsiter->second.str1);
-                if (sciter == g_simap.end()) {
-                    struct SymbolInfo* s1 = make_symbol(fsiter->second.str1.c_str(), si->exchange);
-                    memcpy(s1, si, sizeof(struct SymbolInfo));
-                    s1->type_fg = 0x20;
-                    strcpy(s1->symbol, fsiter->second.str1.c_str());
-                    strcpy(s1->name, fsiter->second.str2.c_str());
-                    strcpy(s1->root, fsiter->second.str1.c_str());
-                    Logf("add symbol %s, %s to map", fsiter->second.str1.c_str(), s1->name);
-                    //bm
-                    struct SymbolRootInfo* root0 = get_commroot_info(si->root, si->exchange);
-                    if (root0) {
-                        struct SymbolRootInfo* newRoot = make_symbol_root(s1->root, s1->exchange);
-                        memcpy(newRoot, root0, sizeof(struct SymbolRootInfo));
-                        strcpy(newRoot->exchange, s1->exchange);
-                        strcpy(newRoot->group_code, s1->root);
-                        char rootkey1[40];
-                        sprintf(rootkey1, "%s;%s", s1->exchange, s1->root);
-                        g_srmap[rootkey1] = sr2midx(newRoot);
-                    }
+        char exchgcommroottype[64];
+        char typecode = ' ';
+        int typecode2 = 1;
+        if (IS_FUTURE(si)) {
+            typecode = 'f';
+        }
+        else if (IS_OPTION(si)) {
+            typecode = 'o';
+            typecode2 = 2;
+        }
 
-                    char typeexchgcomm[200];
-                    sprintf(typeexchgcomm, "%d;%s;%s", 0, s1->exchange, s1->root);
-                    gSymbol2CategoryMap[typeexchgcomm] = 100;
+        char categoryMapKey[64];
+        sprintf(categoryMapKey, "%d;%s;%s", typecode2, si->exchange, si->root_ext);
+        simap_t::iterator categorymap_iter = gSymbol2CategoryMap.find(categoryMapKey);
+        if (categorymap_iter != gSymbol2CategoryMap.end()) {
+            si->category_id = categorymap_iter->second;
+        }
 
-                    s1->category_id = 100;
-                    //stat.BytesSent += SendSymbolCache(pSpotCache);
-                    //Logf("subscribe: %s::%s", pSpotCache->commodity.ExchangeAbbr, pSpotCache->commodity.CommRootAbbr);
-                    //mdcapi.quotation_subscribe(curr_handle, pSpotCache->commodity.ExchangeAbbr, pSpotCache->commodity.CommRootAbbr, Mdca_QT_All);
-                }
-            }
-
-            if (IS_FUTURE(si->type_fg) && !(IS_SPREAD(si->extra_fg))) {
-                if (isSubscribed(si)) {
-                    char exchgcomm[65];
-                    sprintf(exchgcomm, "%s;%s", si->exchange, si->root);
-                    addRemoteMonthEntry(exchgcomm, si->duemon);
-                }
+        if (IS_FUTURE(si) && !(IS_SPREAD(si))) {
+            if (isSubscribed(si)) {
+                char exchgcomm[65];
+                sprintf(exchgcomm, "%s;%s", si->exchange, si->root_ext);
+                addRemoteMonthEntry(exchgcomm, si->duemon);
             }
         }
+        //把周期貨/選擇權的root換掉
+
+        sprintf(exchgcommroottype, "%s;%s;%c", si->exchange, si->root_ext, typecode);
+        s2smap_t::iterator alteriter = gAlterCommrootMap.find(exchgcommroottype);
+        if (alteriter != gAlterCommrootMap.end()) {
+            sprintf(si->root_ext, "%s", alteriter->second.c_str());
+        }
+        // create new symbol entry for spot index
+        add_spot_symbol(si);
+
         rec++;
     }
     if (p->result == 'L') {
@@ -1357,10 +1787,6 @@ struct SymbolInfo* get_symbol(const char* symbol) {
     return gsm->symbols + iter->second;
 }
 
-const char* ConvertToMIC(const char* exchg) {
-    return exchg;
-}
-
 /*
 int send_tick(const LPMdcs_QuotationPtr q, struct SymbolCache* psi) {
     const Mdcs_Commodity* si = &psi->commodity;
@@ -1397,16 +1823,6 @@ int send_tick(const LPMdcs_QuotationPtr q, struct SymbolCache* psi) {
 }
 */
 
-void convertOptionCode(const char* symbol, char* newSymbolCode) {
-    strcpy(newSymbolCode, symbol);
-}
-
-void FillTimeString(char* buf, int buflen) {
-    time_t t0 = time(NULL);
-    struct tm* t1 = localtime(&t0);
-    strftime(buf, buflen, "%Y%m%d_%H:%M:%S.000", t1);
-}
-
 // 0: clear quote, 2: open, 7: close
 void MakeSymbolTradeSessionUpdateEvent(const char* symbol, struct Vip2UpdateEvent* r1, int status) {
     r1->Mode = 57;
@@ -1422,83 +1838,6 @@ void MakeSymbolTradeSessionUpdateEvent(const char* symbol, struct Vip2UpdateEven
     r1->ColListCnt = 1;
     strcpy(r1->ColList[0].ColName, "340");
     sprintf(r1->ColList[0].ColVal, "%d", status);
-}
-
-int emd_send(const char* buf, size_t len, int flags) {
-    /*
-    struct timespec tp;
-    if (bandwidth_control) {
-        clock_gettime(CLOCK_REALTIME, &tp);
-        double difft = diff_timespec(&bandwidth_timeout, &tp);
-        if (difft<0.0) {   // timeout
-            bandwidth_timeout.tv_sec++;
-            current_bandwidth = len;
-        }
-        else {   // not timeout
-            if (current_bandwidth<(max_kbytes_per_sec*1024)) {
-                current_bandwidth += len;
-            }
-            else {
-                struct timespec sleeptp;
-                sleeptp.tv_sec = 0;
-                sleeptp.tv_nsec = difft*1.0e9;
-                nanosleep(&sleeptp, NULL);
-                Logf("sleep %d nanoseconds", sleeptp.tv_nsec);
-                current_bandwidth = len;
-                bandwidth_timeout.tv_sec++;
-            }
-        }
-    }
-    */
-    int ret;
-    if (g_outfp) {
-        ret = fwrite(buf, 1, len, g_outfp);
-        ret += fwrite("\n", 1, 1, g_outfp);
-        fflush(g_outfp);
-    }
-    if (g_zout1 != NULL) {
-        ret = zmq_send(g_zout1, buf, len, flags);
-    }
-    if (g_zout2 != NULL) {
-        ret = zmq_send(g_zout2, buf, len, flags);
-    }
-    return ret;
-}
-
-const char* convert_to_apex_symbol_type(char fg) {
-    switch (fg) {
-    case 0x10: // index
-        return "IX";
-    case 0x20: // common stock
-        return "CS";
-    case 0x21: // warrant
-        return "WR";
-    case 0x30: // commodity future
-        return "CF";
-    case 0x31: // index future
-        return "NF";
-    case 0x32: // stock future
-        return "SF";
-    case 0x33: // interest future
-        return "IF";
-    case 0x34: // bond future
-        return "BF";
-    case 0x35: // currency future
-        return "XF";
-    case 0x40: // index option
-        return "NO";
-    case 0x41: // stock option
-        return "SO";
-    case 0x42: // future  option
-        return "FO";
-    case 0x43: // bond option
-        return "BO";
-    case 0x44: // currency option
-        return "XO";
-    case 0x45: // interest option
-        return "IO";
-    }
-    return "  ";
 }
 
 int SendTradeSessionStatus(struct SymbolInfo* si, int status) {
@@ -1582,6 +1921,10 @@ int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
     si->high = sbcd64(p->high);
     si->low = sbcd64(p->low);
 
+    if (!si->is_subscribed) {
+        return 0;
+    }
+
     struct Vip2UpdateEvent r1;
     r1.Mode = 57;
     r1.Version = 0;
@@ -1633,22 +1976,47 @@ int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
 }
 
 int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
+    si->tick_ymd = bcd32(t0->date);
+    si->tick_hmsf = (uint32_t)bcd64(t0->time);
+    si->close = sbcd64(t0->price);
+    si->tick_vol = bcd32(t0->tickvol);
+    si->tot_vol = bcd64(t0->totvol);
+    si->tick_value = bcd64(t0->value) / fdec_tbl[bcd32(t0->value_dec)];
+    si->tot_value = bcd64(t0->tot_value) / fdec_tbl[bcd32(t0->tot_value_dec)];
+    si->balance = bcd64(t0->balance);
+    si->oi = bcd64(t0->oi);
+    si->price_offset = t0->ba_offset;
+    si->trade_status = t0->trade_status;
+    if (si->close > si->high) {
+        si->high = si->close;
+    }
+    if (si->close < si->low) {
+        si->low = si->close;
+    }
+
+    if (!si->is_subscribed) {
+        return 0;
+    }
     struct Vip2AddTick t;
     t.Mode = 51;
     t.Version = 48;
-    sprintf(t.Symbol, "%s.US", si->symbol);
-    sprintf(t.SecType, "%c", 'S'); //#todo, 'S' to be replaced, when real date arrive
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+    char symbolType = convert_to_apex_symbol_type(si->type_fg)[1];
+    sprintf(t.Symbol, "%s.US", newSymbolCode);
+    sprintf(t.SecType, "%c", symbolType);
 
     t.Tick.TradeType = 3;
     strcpy(t.Tick.Plottable, "11");
     t.Tick.UpdStat = 1;
-    fill_timestamp(bcd32(t0->date), bcd64(t0->time), t.Tick.TickTime, JsonValLen);
-    t.Tick.TotalVol = bcd64(t0->totvol);
-    sprintf(t.Tick.TotAmt, "%.0f", bcd64(t0->tot_value) / fdec_tbl[bcd32(t0->tot_value_dec)]);
+    fill_timestamp(si->tick_ymd, si->tick_hmsf, t.Tick.TickTime, JsonValLen);
+    t.Tick.TotalVol = si->tot_vol;
+    sprintf(t.Tick.TotAmt, "%.0f", si->tot_value);
     t.Tick.PriceCnt = 1;
     t.Tick.NoVolCnt = 0;
-    t.Tick.Parr[0].Price = sbcd64(t0->price);
-    t.Tick.Parr[0].Vol = bcd64(t0->tickvol);
+    t.Tick.Parr[0].Price = si->close;
+    t.Tick.Parr[0].Vol = si->tick_vol;
     t.Tick.Parr[0].Type = 0;
 
     char jsonbuf[2048];
@@ -1657,7 +2025,7 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
         char sendbuf[512];
         int outsz = sprintf(sendbuf, "V01$%s$%c$Tick$%s",
             ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
-            convert_to_apex_symbol_type(si->type_fg)[1],
+            symbolType,
             t.Symbol);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
@@ -1667,14 +2035,36 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
 }
 
 int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
+    si->ba_ymd = bcd32(ba->date);
+    si->ba_hmsf = (uint32_t)bcd64(ba->time);
+    int depth = bcd32(ba->depth);
+    if (depth > 20) {
+        depth = 20;
+    }
+    struct m2_pv* baItem = (struct m2_pv*)ba->tail;
+    int i;
+    for (i = 0; i < depth; ++i) {
+        si->bid[i].price = sbcd64(baItem->price);
+        si->bid[i].vol = bcd32(baItem->vol);
+        baItem++;
+        si->ask[i].price = sbcd64(baItem->price);
+        si->ask[i].vol = bcd32(baItem->vol);
+        baItem++;
+    }
+
+    if (!si->is_subscribed) {
+        return 0;
+    }
     struct Vip2UpdateBA r1;
+    memset(&r1, 0x00, sizeof(struct Vip2UpdateBA));
     r1.Mode = 53;
     r1.Version = 48;
-    //bm
-    sprintf(r1.Symbol, "%s.%s", si->symbol, "US");
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+    sprintf(r1.Symbol, "%s.US", newSymbolCode);
     char sectype = convert_to_apex_symbol_type(si->type_fg)[1];
     sprintf(r1.SecType, "%c", sectype);
-    fill_timestamp(bcd32(ba->date), bcd64(ba->time), r1.BA.BATime, JsonValLen);
+    fill_timestamp(si->ba_ymd, si->ba_hmsf, r1.BA.BATime, JsonValLen);
     r1.BA.TradeType = 3;
     r1.BA.MDFeedT = 101;
     r1.BA.FBidPrice = 0;
@@ -1682,18 +2072,24 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
     r1.BA.FAskPrice = 0;
     r1.BA.FAskVol = 0;
 
-    int depth = bcd32(ba->depth);
-    struct m2_pv* baItem = (struct m2_pv*)ba->tail;
-    int i;
     for (i = 0; i < depth; ++i) {
-        r1.BA.Bid[i].BAPrice = sbcd64(baItem->price);
-        r1.BA.Bid[i].BAVol = bcd32(baItem->vol);
-        baItem++;
-        r1.BA.Ask[i].BAPrice = sbcd64(baItem->price);
-        r1.BA.Ask[i].BAVol = bcd32(baItem->vol);
-        baItem++;
+        r1.BA.Bid[i].BAPrice = si->bid[i].price;
+        r1.BA.Bid[i].BAVol = si->bid[i].vol;
+        r1.BA.Ask[i].BAPrice = si->ask[i].price;
+        r1.BA.Ask[i].BAVol = si->ask[i].vol;
     }
-
+    char jsonbuf[2048];
+    int len = MakeJsonUpdateBA(&r1, jsonbuf, 2048);
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$BA$%s",
+            ConvertToMIC(si->exchange),
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            r1.Symbol);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+        return outsz + len;
+    }
     return 0;
 }
 

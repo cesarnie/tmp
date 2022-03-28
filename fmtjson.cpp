@@ -100,3 +100,74 @@ int MakeJsonUpdateEvent(struct Vip2UpdateEvent* si, char* bufout, size_t bufoutl
     int len = sprintf(bufout, "%s", sb.GetString());
     return len;
 }
+
+int MakeJsonUpdateBA(struct Vip2UpdateBA* ba, char* buf, size_t buflen) {
+    rapidjson::StringBuffer sb;
+    rapidjson::Writer<rapidjson::StringBuffer> w(sb);
+
+    w.StartObject();
+
+    w.Key("11000");
+    w.Int(ba->Mode);
+    w.Key("15000");
+    w.Int(ba->Version);
+    w.Key("48");
+    w.String(ba->Symbol);
+    w.Key("11001");
+    w.String(ba->SecType);
+    w.Key("11503");
+    w.StartObject();
+    w.Key("273");
+    w.String(ba->BA.BATime);
+    w.Key("339");
+    w.Int(ba->BA.TradeType);
+    w.Key("1022");
+    w.Int(ba->BA.MDFeedT);
+    w.Key("29000");
+    w.Int(ba->BA.FBidPrice);
+    w.Key("29001");
+    w.Int(ba->BA.FBidVol);
+    w.Key("29002");
+    w.Int(ba->BA.FAskPrice);
+    w.Key("29003");
+    w.Int(ba->BA.FAskVol);
+
+    w.Key("12011");
+    w.StartArray();
+    for (int i = 0; i < 20; ++i) {
+        if (ba->BA.Bid[i].BAVol <= 0) {
+            break;
+        }
+        w.StartObject();
+        w.Key("270");
+        w.Int64(ba->BA.Bid[i].BAPrice);
+        w.Key("271");
+        w.Int(ba->BA.Bid[i].BAVol);
+        w.EndObject();
+    }
+    w.EndArray();
+
+    w.Key("12012");
+    w.StartArray();
+    for (int i = 0; i < 20; ++i) {
+        if (ba->BA.Ask[i].BAVol <= 0) {
+            break;
+        }
+        w.StartObject();
+        w.Key("270");
+        w.Int64(ba->BA.Ask[i].BAPrice);
+        w.Key("271");
+        w.Int(ba->BA.Ask[i].BAVol);
+        w.EndObject();
+    }
+    w.EndArray();
+    w.EndObject();
+
+    w.EndObject();
+
+    if ((sb.GetSize() + 1) > buflen) {
+        return -1;
+    }
+    int len = sprintf(buf, "%s", sb.GetString());
+    return len;
+}

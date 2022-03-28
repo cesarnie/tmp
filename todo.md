@@ -1,13 +1,7 @@
-on symbol complete:
-    set category_id
-    set is_farmonth
-    set is_nearmonth
-    gAlterCommrootMap
-    gTHostSet
-    subscribe exchanges
-    
-send symbol
-subscribe symbol
+convertOptionCode
+處理併筆格式
+spf1.0的很多zmq send沒有實做到2.0
+send price scale
 
 
 2022/2/18
@@ -40,4 +34,14 @@ subscribe symbol
     read symbols to request from ftpdata
 2022/3/17
     parse market data protocol
-    
+2022/3/25
+    set category_id
+    set is_farmonth
+    set is_nearmonth
+    gAlterCommrootMap
+    gTHostSet
+    subscribe exchanges
+    send symbol
+    subscribe symbol
+2022/3/28
+    send ba

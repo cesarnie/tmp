@@ -57,13 +57,13 @@ void ctrim(char* s) {
     memmove(s, p, l + 1);
 }
 
-int split_name_value_pair(char* inbuf, char* name, char* value, char splitchar) {
-    char* splits = strchr(inbuf, splitchar);
+int split_name_value_pair(const char* inbuf, char* name, char* value, char splitchar) {
+    const char* splits = strchr(inbuf, splitchar);
     if (splits == NULL) {
         return 0;
     }
-    *splits = '\0';
-    strcpy(name, inbuf);
+    strncpy(name, inbuf, splits - inbuf);
+    name[splits - inbuf] = 0;
     ctrim(name);
     strcpy(value, splits + 1);
     ctrim(value);
