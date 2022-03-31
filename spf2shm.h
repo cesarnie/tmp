@@ -5,6 +5,7 @@
 #include <semaphore.h>
 
 #include "spf2types.h"
+#include "vip20.h"
 
 #define SHM_VER "0"
 #define SHM_NAME "spf2shm." SHM_VER
@@ -93,7 +94,10 @@ struct SymbolInfo {
     uint8_t is_nearmonth;
     char near_alias[25];
     int near_alias_midx;
-    int feedID;              //
+    int feedID;                      //
+    uint8_t scale_cnt;               //
+    uint8_t scale_from_root;         //
+    struct ScaleItem scale_items[5]; //
 };
 
 struct SymbolRootInfo {
@@ -115,6 +119,8 @@ struct SymbolRootInfo {
     char category;               //
     int timezone;                //
     char extension;              //
+    int scale_cnt;               //
+    struct TypedScaleItem scale_items[5]; //
 };
 
 struct Spf2Shm {

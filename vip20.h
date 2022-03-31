@@ -10,7 +10,7 @@
 #define JsonMaxColListCnt 40
 #define JsonMaxTickCount 80
 #define JsonMaxBADepth 20
-#define MaxPriceScaleItems 10
+#define MaxPriceScaleItems 5
 
 struct ColPair {
     char ColName[JsonColLen];
@@ -37,9 +37,15 @@ struct Vip2UpdateEvent {
 struct ScaleItem {
     int ScopeMin;
     int ScopeMax;
+    int ScopeMode;
     int Numerator;
     int Denominator;
     int MinMovement;
+};
+
+struct TypedScaleItem {
+    int type;
+    struct ScaleItem item;
 };
 
 struct Vip2AddNews {

@@ -1658,6 +1658,42 @@ void add_spot_symbol(struct SymbolInfo* si) {
     sNew->category_id = 100;
 }
 
+int proc_scale_line(std::string& s, struct ScaleItem* scaleItem) {
+    char buf[100];
+    strcpy(buf, s.c_str()); //0,0,0,2,256,1
+    char* tok = strtok(buf, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->ScopeMin = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->ScopeMax = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->ScopeMode = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->Numerator = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->Denominator = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->MinMovement = atol(tok);
+    return 1;
+}
+
 int mdc_parse_symbol(const char* buf, size_t sz) {
     struct m2sv_symbol* p = (struct m2sv_symbol*)buf;
     if (g_plain) {
@@ -1700,6 +1736,51 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         txstr(rec->strike_price, si->strike_price, sizeof(rec->strike_price));
         si->extra_fg = rec->extra_fg;
         txstr(rec->scale, si->scale, sizeof(rec->scale));
+
+        std::vector<std::string> scale_lines;
+        char sctmp[sizeof(si->scale)];
+        strcpy(sctmp, si->scale); // 0;0,0,0,1,1,1|2;0,0,0,2,256,1
+        char* tok;
+        while ((tok = strtok(sctmp, "|")) != NULL) {
+            scale_lines.push_back(tok);
+        }
+        size_t i;
+        for (i = 0; i < scale_lines.size(); ++i) {
+            if (proc_scale_line(scale_lines[i], si->scale_items + si->scale_cnt)) {
+                si->scale_cnt++;
+                if (si->scale_cnt >= 5) {
+                    Logf("err: scale count array size not enough for symbol: %s", si->symbol);
+                    break;
+                }
+            }
+        }
+
+        if (si->scale_cnt == 0) {
+            simap_t::iterator it = g_srmap.find(si->root);
+            if (it != g_srmap.end()) {
+                struct SymbolRootInfo* sr = gsm->roots + it->second;
+                for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
+                    if ((si->extra_fg & 0x04) && sr->scale_items[i].type == 2) {
+                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        si->scale_cnt++;
+                        si->scale_from_root = 1;
+                    }
+                    else if ((si->extra_fg & 0x08) && sr->scale_items[i].type == 1) {
+                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        si->scale_cnt++;
+                        si->scale_from_root = 1;
+                    }
+                    else if (sr->scale_items[i].type == 0) {
+                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        si->scale_cnt++;
+                        si->scale_from_root = 1;
+                    }
+                }
+            }
+            else {
+                Logf("err: no scale info for symbol %s", si->symbol);
+            }
+        }
 
         char exchgcommroottype[64];
         char typecode = ' ';
@@ -2408,6 +2489,47 @@ void dump_symbol_root(struct m2sv_symbol_root* p) {
     }
 }
 
+int proc_typed_scale_line(std::string& s, struct TypedScaleItem* scaleItem) {
+    char buf[100];
+    strcpy(buf, s.c_str()); //2;0,0,0,2,256,1
+    char* tok = strtok(buf, ";");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->type = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.ScopeMin = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.ScopeMax = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.ScopeMode = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.Numerator = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.Denominator = atol(tok);
+    tok = strtok(NULL, ",");
+    if (tok == NULL) {
+        return 0;
+    }
+    scaleItem->item.MinMovement = atol(tok);
+    return 1;
+}
+
 int mdc_parse_symbol_root(const char* buf, size_t sz) {
     struct m2sv_symbol_root* p = (struct m2sv_symbol_root*)buf;
     if (g_plain) {
@@ -2433,6 +2555,25 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
         txstr(rec->group_name, sg->group_name, sizeof(rec->group_name));
         txstr(rec->sessions, sg->sessions, sizeof(rec->sessions));
         txstr(rec->scales, sg->scales, sizeof(rec->scales));
+
+        std::vector<std::string> scale_lines;
+        char sctmp[sizeof(sg->scales)];
+        strcpy(sctmp, sg->scales); // 0;0,0,0,1,1,1|2;0,0,0,2,256,1
+        char* tok;
+        while ((tok = strtok(sctmp, "|")) != NULL) {
+            scale_lines.push_back(tok);
+        }
+        size_t i;
+        for (i = 0; i < scale_lines.size(); ++i) {
+            if (proc_typed_scale_line(scale_lines[i], sg->scale_items + sg->scale_cnt)) {
+                sg->scale_cnt++;
+                if (sg->scale_cnt >= 5) {
+                    Logf("err: scale count array size not enough for symbol root: %s", grp);
+                    break;
+                }
+            }
+        }
+
         txstr(rec->deriv_exchange, sg->deriv_exchange, sizeof(rec->deriv_exchange));
         txstr(rec->deriv_symbol, sg->deriv_symbol, sizeof(rec->deriv_symbol));
         sg->contract_multiplier_dec = bcd32(rec->contract_multiplier_dec);
