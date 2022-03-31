@@ -133,25 +133,6 @@ struct m2_tick {
 };
 
 struct m2_tick_ext {
-    char fg;               // 成交行情 組合加工模式 旗號
-    char cnt[1];           // 以下成交行情 加工筆數
-    char date[4];          // yyyymmdd
-    char time[5];          // hhmmssffff
-    char price[7];         //
-    char tickvol[3];       //
-    char totvol[6];        //
-    char bid[7];           //
-    char bidvol[3];        //
-    char ask[7];           //
-    char askvol[3];        //
-    char value_dec[1];     // 成交金額小數位
-    char value[5];         //
-    char tot_value_dec[1]; // 總成交金額小數位
-    char tot_value[6];     // 總成交金額數值
-    char balance[5];       // 合約持倉量
-    char oi[5];            // 當前未平倉量
-    char ba_offset;        // 價位於委託簿位置
-    char trade_status;     // 文易狀態
     char open[7];          //
     char high[7];          //
     char low[7];           //

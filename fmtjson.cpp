@@ -171,3 +171,45 @@ int MakeJsonUpdateBA(struct Vip2UpdateBA* ba, char* buf, size_t buflen) {
     int len = sprintf(buf, "%s", sb.GetString());
     return len;
 }
+
+int MakeJsonUpdateScalesEvent(struct Vip2PriceScaleUpdateEvent* e, char* bufout, size_t bufoutlen) {
+    rapidjson::StringBuffer sb;
+    rapidjson::Writer<rapidjson::StringBuffer> w(sb);
+
+    w.StartObject();
+    w.Key("11000");
+    w.Uint(e->Mode);
+    w.Key("48");
+    w.String(e->Symbol);
+    w.Key("11001");
+    w.String(e->SecType);
+    w.Key("11505");
+    w.StartObject();
+    w.Key("273");
+    w.String(e->Time);
+    w.Key("12035");
+    w.StartArray();
+    for (int i = 0; i < e->ScaleCount; ++i) {
+        w.StartObject();
+        w.Key("12036");
+        w.Int(e->Scales[i].ScopeMin);
+        w.Key("12037");
+        w.Int(e->Scales[i].ScopeMax);
+        w.Key("12038");
+        w.Int(e->Scales[i].Numerator);
+        w.Key("12039");
+        w.Int(e->Scales[i].Denominator);
+        w.Key("12040");
+        w.Int(e->Scales[i].MinMovement);
+        w.EndObject();
+    }
+    w.EndArray();
+    w.EndObject();
+    w.EndObject();
+
+    if ((sb.GetSize() + 1) > bufoutlen) {
+        return -1;
+    }
+    int len = sprintf(bufout, "%s", sb.GetString());
+    return len;
+}

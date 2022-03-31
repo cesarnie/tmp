@@ -1586,9 +1586,9 @@ void mdc_dump_symbol(struct m2_head* h, struct m2sv_symbol* p) {
         txstr(rec->strike_price, strikep, 12);
         char scale[73];
         txstr(rec->scale, scale, 72);
-        Logf("  |%s symbol=%s, name=%s, root=%s, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
+        Logf("  |%s symbol=%s, name=%s, root=%s, exchange=%s, duemon=%d, nativemon=%d, start=%d, settledt=%d, 1stnotice=%d, 2ndnotice=%d, enddt=%d, lastdt=%d, type=%02x, lotsz=%d, strikeprice=%s, extrafg=%02x, scale=%s",
             fmt_plain_head(h),
-            symbol, name, root,
+            symbol, name, root, exchange,
             bcd32(rec->duemon),
             bcd32(rec->native_duemon),
             bcd32(rec->start_date),
@@ -1894,20 +1894,135 @@ int fchanged(struct m2_quote* q, int mask) {
     return fexist(q, mask) && fupdated(q, mask);
 }
 
-int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
-    if (si->session_status == -1) {
-        if (fexist(p, QM_SESSION_STATUS)) {
-            SendTradeSessionStatus(si, ConvertToApxTradeSessionStatus(bcd32(p->trade_session_status)));
-            si->session_status = bcd32(p->trade_session_status);
-            Logf("initial trade session status for symbol %s=%d", si->symbol, p->trade_session_status);
-        }
+void emd_send_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
+    struct Vip2UpdateEvent r1;
+    r1.Mode = 57;
+    r1.Version = 0;
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+
+    strcpy(r1.FilterCol, "SYMBO");
+    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
+    time_t nowt = time(NULL);
+    int ymd = to_ymd(nowt); //#todo, date value will be incorrect on midnight
+    int64_t headtime = bcd64(head->time);
+    fill_timestamp(ymd, headtime, r1.EventTime, JsonValLen);
+    r1.EventType = 2;
+    int col = 0;
+    if (fexist(p, QM_OPEN_REF)) {
+        strcpy(r1.ColList[col].ColName, "1150"); // open ref
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->open_ref);
     }
-    else if (fchanged(p, QM_SESSION_STATUS)) {
-        SendTradeSessionStatus(si, ConvertToApxTradeSessionStatus(bcd32(p->trade_session_status)));
-        Logf("symbol %s trade session status changed from %d to %d", si->symbol, si->session_status, p->trade_session_status);
-        si->session_status = bcd32(p->trade_session_status);
+    if (fexist(p, QM_PREV_CLOSE)) {
+        strcpy(r1.ColList[col].ColName, "140"); // previous close
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_close);
+    }
+    if (fexist(p, QM_OPEN)) {
+        strcpy(r1.ColList[col].ColName, "1025"); // open
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->open);
+    }
+    if (fexist(p, QM_HIGH)) {
+        strcpy(r1.ColList[col].ColName, "332"); // high
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->high);
+    }
+    if (fexist(p, QM_LOW)) {
+        strcpy(r1.ColList[col].ColName, "333"); // low
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->low);
+    }
+    if (fexist(p, QM_CLOSE)) {
+        strcpy(r1.ColList[col].ColName, "31"); // close
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->close);
+    }
+    if (fexist(p, QM_RISE_LIMIT)) {
+        strcpy(r1.ColList[col].ColName, "1149"); // up limit
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->rise_limit);
+    }
+    if (fexist(p, QM_FALL_LIMIT)) {
+        strcpy(r1.ColList[col].ColName, "1148"); // down limit
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->fall_limit);
+    }
+    if (fexist(p, QM_SETTLEMENT)) {
+        strcpy(r1.ColList[col].ColName, "20201"); // settlement price
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->settlement);
+    }
+    if (fexist(p, QM_PREV_SETTLEMENT)) {
+        strcpy(r1.ColList[col].ColName, "20206"); // prev settlement price
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_settlement);
+    }
+    if (fexist(p, QM_PREV_OI)) {
+        strcpy(r1.ColList[col].ColName, "20116"); // previous open interest
+        sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_oi);
     }
 
+    r1.ColListCnt = col;
+
+    char jsonbuf[2048];
+    int len = MakeJsonUpdateEvent(&r1, jsonbuf, sizeof(jsonbuf));
+    if (len > 0) {
+        char sendbuf[512];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
+            ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->symbol);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+    }
+}
+
+void emd_send_high_low(struct SymbolInfo* si) {
+    struct Vip2UpdateEvent r1;
+    r1.Mode = 57;
+    r1.Version = 0;
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+
+    strcpy(r1.FilterCol, "SYMBO");
+    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
+    fill_timestamp(si->tick_ymd, si->tick_hmsf, r1.EventTime, JsonValLen);
+    r1.EventType = 2;
+    int col = 0;
+    strcpy(r1.ColList[col].ColName, "332"); // high
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->high);
+    strcpy(r1.ColList[col].ColName, "333"); // low
+    sprintf(r1.ColList[col++].ColVal, "%ld", si->low);
+    r1.ColListCnt = col;
+
+    char jsonbuf[512];
+    int len = MakeJsonUpdateEvent(&r1, jsonbuf, sizeof(jsonbuf));
+    if (len > 0) {
+        char sendbuf[140];
+        int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
+            ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
+            convert_to_apex_symbol_type(si->type_fg)[1],
+            r1.FilterVal);
+        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+        emd_send(jsonbuf, len, 0);
+    }
+}
+
+void on_session_clear(struct SymbolInfo* si, int oldStatus) {
+    Logf("OnClear: %s", si->symbol);
+    SendTradeSessionStatus(si, TRADE_CLOSE);
+    SendTradeSessionStatus(si, TRADE_CLEAR);
+}
+
+void on_session_open(struct SymbolInfo* si, int oldStatus) {
+    SendTradeSessionStatus(si, TRADE_CLOSE);
+    SendTradeSessionStatus(si, TRADE_CLEAR);
+    SendTradeSessionStatus(si, TRADE_OPEN);
+}
+
+void on_session_close(struct SymbolInfo* si, int oldStatus) {
+    if (si->session_status != 3) {
+        Logf("send additional open signal: symbol=%s", si->symbol);
+        SendTradeSessionStatus(si, TRADE_OPEN);
+    }
+    SendTradeSessionStatus(si, TRADE_CLOSE);
+}
+
+int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
     si->session_date = bcd32(p->trade_date);
     si->rise_limit = sbcd64(p->rise_limit);
     si->fall_limit = sbcd64(p->fall_limit);
@@ -1924,79 +2039,29 @@ int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
     if (!si->is_subscribed) {
         return 0;
     }
-
-    struct Vip2UpdateEvent r1;
-    r1.Mode = 57;
-    r1.Version = 0;
-
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-
-    strcpy(r1.FilterCol, "SYMBO");
-    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
-    time_t nowt = time(NULL);
-    int ymd = to_ymd(nowt); //#todo, date value will be incorrect on midnight
-    int64_t headtime = bcd64(head->time);
-    fill_timestamp(ymd, headtime, r1.EventTime, JsonValLen);
-    r1.EventType = 2;
-    int col = 0;
-    strcpy(r1.ColList[col].ColName, "1150"); // previous close
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_close);
-    strcpy(r1.ColList[col].ColName, "1025"); // open
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->open);
-    strcpy(r1.ColList[col].ColName, "332"); // high
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->high);
-    strcpy(r1.ColList[col].ColName, "333"); // low
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->low);
-    strcpy(r1.ColList[col].ColName, "31"); // close
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->close);
-    strcpy(r1.ColList[col].ColName, "1149"); // up limit
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->rise_limit);
-    strcpy(r1.ColList[col].ColName, "1148"); // down limit
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->fall_limit);
-    strcpy(r1.ColList[col].ColName, "20201"); // settlement price
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->settlement);
-    strcpy(r1.ColList[col].ColName, "20206"); // prev settlement price
-    sprintf(r1.ColList[col++].ColVal, "%ld", si->prev_settlement);
-    r1.ColListCnt = col;
-
-    char jsonbuf[2048];
-    int len = MakeJsonUpdateEvent(&r1, jsonbuf, sizeof(jsonbuf));
-    if (len > 0) {
-        char sendbuf[512];
-        int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
-            ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
-            convert_to_apex_symbol_type(si->type_fg)[1],
-            si->symbol);
-        emd_send(sendbuf, outsz, ZMQ_SNDMORE);
-        emd_send(jsonbuf, len, 0);
-        return outsz + len;
+    if ((si->session_status == -1 && fexist(p, QM_SESSION_STATUS)) ||
+        fchanged(p, QM_SESSION_STATUS)) {
+        int apexStatus = ConvertToApxTradeSessionStatus(bcd32(p->trade_session_status));
+        // Logf("initial trade session status for symbol %s=%d", si->symbol, p->trade_session_status);
+        switch (apexStatus) {
+        case TRADE_CLEAR:
+            on_session_clear(si, si->session_status);
+            break;
+        case TRADE_OPEN:
+            on_session_open(si, si->session_status);
+            break;
+        case TRADE_CLOSE:
+            on_session_close(si, si->session_status);
+            break;
+        }
+        Logf("symbol %s trade session status changed from %d to %d", si->symbol, si->session_status, apexStatus);
+        si->session_status = apexStatus;
     }
+    emd_send_quote(si, head, p);
     return 0;
 }
 
-int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
-    si->tick_ymd = bcd32(t0->date);
-    si->tick_hmsf = (uint32_t)bcd64(t0->time);
-    si->close = sbcd64(t0->price);
-    si->tick_vol = bcd32(t0->tickvol);
-    si->tot_vol = bcd64(t0->totvol);
-    si->tick_value = bcd64(t0->value) / fdec_tbl[bcd32(t0->value_dec)];
-    si->tot_value = bcd64(t0->tot_value) / fdec_tbl[bcd32(t0->tot_value_dec)];
-    si->balance = bcd64(t0->balance);
-    si->oi = bcd64(t0->oi);
-    si->price_offset = t0->ba_offset;
-    si->trade_status = t0->trade_status;
-    if (si->close > si->high) {
-        si->high = si->close;
-    }
-    if (si->close < si->low) {
-        si->low = si->close;
-    }
-
-    if (!si->is_subscribed) {
-        return 0;
-    }
+void emd_send_tick(struct SymbolInfo* si) {
     struct Vip2AddTick t;
     t.Mode = 51;
     t.Version = 48;
@@ -2029,8 +2094,32 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
             t.Symbol);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
-        return outsz + len;
     }
+}
+
+int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
+    si->tick_ymd = bcd32(t0->date);
+    si->tick_hmsf = (uint32_t)bcd64(t0->time);
+    si->close = sbcd64(t0->price);
+    si->tick_vol = bcd32(t0->tickvol);
+    si->tot_vol = bcd64(t0->totvol);
+    si->tick_value = bcd64(t0->value) / fdec_tbl[bcd32(t0->value_dec)];
+    si->tot_value = bcd64(t0->tot_value) / fdec_tbl[bcd32(t0->tot_value_dec)];
+    si->balance = bcd64(t0->balance);
+    si->oi = bcd64(t0->oi);
+    si->price_offset = t0->ba_offset;
+    si->trade_status = t0->trade_status;
+    if (si->close > si->high) {
+        si->high = si->close;
+    }
+    if (si->close < si->low) {
+        si->low = si->close;
+    }
+
+    if (!si->is_subscribed) {
+        return 0;
+    }
+    emd_send_tick(si);
     return 0;
 }
 
@@ -2093,7 +2182,11 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
     return 0;
 }
 
-int mdc_parse_tick_ext(struct m2_tick_ext* t) {
+//todo
+int mdc_parse_tick_ext(struct SymbolInfo* si, struct m2_tick_ext* t) {
+    si->high = sbcd64(t->high);
+    si->low = sbcd64(t->low);
+    emd_send_high_low(si);
     return 0;
 }
 
@@ -2234,7 +2327,9 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
             tail += sizeof(struct m2_tick);
         }
         else {
-            mdc_parse_tick_ext((struct m2_tick_ext*)tail);
+            mdc_parse_tick(si, (struct m2_tick*)tail);
+            tail += sizeof(struct m2_tick);
+            mdc_parse_tick_ext(si, (struct m2_tick_ext*)tail);
             //#todo, how to deal with high, low, open in this tick?
             tail += sizeof(struct m2_tick_ext);
         }

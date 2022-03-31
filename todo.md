@@ -1,6 +1,3 @@
-print subscribe table
-處理併筆格式
-spf1.0的很多zmq send沒有實做到2.0
 send price scale
     0;0,0,0,1,1,1|2;0,0,0,2,256,1
     0	/* 預設(其他) */
@@ -12,6 +9,7 @@ send price scale
 	Mdct_Float		Numerator;			/* 價格基準分子 */
 	Mdct_Float		Denominator;		/* 價格基準分母 */
 	Mdct_Int		MinMovement;		/* 最小跳動點數 */
+sigint cannot kill process    
 
 
 2022/2/18
@@ -56,3 +54,8 @@ send price scale
 2022/3/28
     send ba
     convertOptionCode
+2022/3/30
+    print subscribe table
+    處理併筆格式
+    spf1.0的很多zmq send沒有實做到2.0
+    open event
