@@ -1174,7 +1174,7 @@ void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue)
     sprintf(ue->ColList[cidx].ColVal, "%d", si->duemon);
     ++cidx;
     strcpy(ue->ColList[cidx].ColName, "205"); // mature date
-    sprintf(ue->ColList[cidx].ColVal, "%02d", si->settle_date % 100);
+    sprintf(ue->ColList[cidx].ColVal, "%02d", si->end_date % 100);
     ++cidx;
     strcpy(ue->ColList[cidx].ColName, "1227");
 
@@ -1362,7 +1362,10 @@ int send_all_symbols(int sleepOnSz) {
             MakePriceScaleEvent(si, &ps);
             len = MakeJsonUpdateScalesEvent(&ps, jsonbuf, 2048);
             if (len > 0) {
-                outsz = sprintf(sendbuf, "V01$%s$A$UE$ALL", ue.ColList[1].ColVal);
+                outsz = sprintf(sendbuf, "V01$%s$%c$Scale$%s",
+                    si->exchange,
+                    si->apex_symbol_type,
+                    ue.ColList[1].ColVal);
                 emd_send(sendbuf, outsz, ZMQ_SNDMORE);
                 emd_send(jsonbuf, len, 0);
                 onesz = outsz + len;
@@ -1410,6 +1413,7 @@ struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
         int midx = si2midx(si);
         memset(si, 0x00, sizeof(struct SymbolInfo));
         si->category_id = -1;
+        si->decimals = 99;
         g_simap[symbol] = midx;
         strcpy(si->symbol, symbol);
         strcpy(si->exchange, exchange);
@@ -1728,6 +1732,9 @@ int proc_scale_line(std::string& s, struct ScaleItem* scaleItem) {
 
 int get_decimal_count_from_denominator(int numerator, int denominator) {
     char nbuf[64];
+    if (numerator == 0) {
+        numerator = 1;
+    }
     sprintf(nbuf, "%.0f", (1000000000000.0 / denominator) * numerator);
     int zerocnt = 0;
     int len = strlen(nbuf);
@@ -1817,17 +1824,17 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                 struct SymbolRootInfo* sr = gsm->roots + it->second;
                 for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
                     if ((si->extra_fg & 0x04) && sr->scale_items[i].type == 2) {
-                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
                         si->scale_cnt++;
                         si->scale_from_root = 1;
                     }
                     else if ((si->extra_fg & 0x08) && sr->scale_items[i].type == 1) {
-                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
                         si->scale_cnt++;
                         si->scale_from_root = 1;
                     }
                     else if (sr->scale_items[i].type == 0) {
-                        memcpy(si->scale_items + si->scale_cnt, sr->scale_items + i, sizeof(struct ScaleItem));
+                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
                         si->scale_cnt++;
                         si->scale_from_root = 1;
                     }
@@ -2447,12 +2454,17 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
         return 0;
     }
     int pricedec = bcd32(p->decimals);
-    // if (si->decimals != pricedec) {
-    //     Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
-    //         si->symbol, pricedec, si->decimals);
-    //     si->decimals = pricedec;
-    //     return 0;
-    // }
+    if (si->decimals == 99) {
+        si->decimals = pricedec;
+    }
+    else {
+        if (si->decimals != pricedec) {
+            Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
+                si->symbol, pricedec, si->decimals);
+            si->decimals = pricedec;
+            return 0;
+        }
+    }
 
     int hasquote = 0;
     int hastick = 0;

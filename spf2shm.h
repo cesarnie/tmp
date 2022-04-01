@@ -45,7 +45,7 @@ struct SymbolInfo {
     char exchange[13];
     char root_ext[13]; //EW(週期貨)在這裡會被換成ES，原來的EW會放在original_root
     char root[13];     //EW
-    unsigned char decimals; //
+    char decimals;     //
     char type_fg;           //
     char apex_symbol_type;  //X,R,F,S,O
     int duemon;        //yyyymm
