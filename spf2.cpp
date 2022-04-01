@@ -1726,6 +1726,26 @@ int proc_scale_line(std::string& s, struct ScaleItem* scaleItem) {
     return 1;
 }
 
+int get_decimal_count_from_denominator(int numerator, int denominator) {
+    char nbuf[64];
+    sprintf(nbuf, "%.0f", (1000000000000.0 / denominator) * numerator);
+    int zerocnt = 0;
+    int len = strlen(nbuf);
+    int i;
+    for (i = len - 1; i >= 0; --i) {
+        if (nbuf[i] == '0') {
+            zerocnt++;
+            continue;
+        }
+        break;
+    }
+    int ret = 12 - zerocnt;
+    if (ret < 0) {
+        ret = 0;
+    }
+    return ret;
+}
+
 int mdc_parse_symbol(const char* buf, size_t sz) {
     struct m2sv_symbol* p = (struct m2sv_symbol*)buf;
     if (g_plain) {
@@ -1773,9 +1793,10 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         std::vector<std::string> scale_lines;
         char sctmp[sizeof(si->scale)];
         strcpy(sctmp, si->scale); // 0;0,0,0,1,1,1|2;0,0,0,2,256,1
-        char* tok;
-        while ((tok = strtok(sctmp, ";")) != NULL) {
+        char* tok = strtok(sctmp, ";");
+        while (tok) {
             scale_lines.push_back(tok);
+            tok = strtok(NULL, ";");
         }
         size_t i;
         for (i = 0; i < scale_lines.size(); ++i) {
@@ -1789,7 +1810,9 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         }
 
         if (si->scale_cnt == 0) {
-            simap_t::iterator it = g_srmap.find(si->root);
+            char rootkey[30];
+            sprintf(rootkey, "%s;%s", si->exchange, si->root);
+            simap_t::iterator it = g_srmap.find(rootkey);
             if (it != g_srmap.end()) {
                 struct SymbolRootInfo* sr = gsm->roots + it->second;
                 for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
@@ -1811,8 +1834,12 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                 }
             }
             else {
-                Logf("err: no scale info for symbol %s", si->symbol);
+                Logf("err: no scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
             }
+        }
+
+        if (si->scale_cnt) {
+            si->decimals = get_decimal_count_from_denominator(si->scale_items[0].Numerator, si->scale_items[0].Denominator);
         }
 
         char exchgcommroottype[64];
@@ -2136,19 +2163,20 @@ void on_session_close(struct SymbolInfo* si, int oldStatus) {
     SendTradeSessionStatus(si, TRADE_CLOSE);
 }
 
-int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p) {
+int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p, int decimals) {
+    int decDiff = decimals - si->decimals;
     si->session_date = bcd32(p->trade_date);
-    si->rise_limit = sbcd64(p->rise_limit);
-    si->fall_limit = sbcd64(p->fall_limit);
-    si->open_ref = sbcd64(p->open_ref);
-    si->close = sbcd64(p->close);
-    si->settlement = sbcd64(p->settlement);
-    si->prev_close = sbcd64(p->prev_close);
-    si->prev_settlement = sbcd64(p->prev_settlement);
+    si->rise_limit = sbcd64(p->rise_limit) / dec_tbl[decDiff];
+    si->fall_limit = sbcd64(p->fall_limit) / dec_tbl[decDiff];
+    si->open_ref = sbcd64(p->open_ref) / dec_tbl[decDiff];
+    si->close = sbcd64(p->close) / dec_tbl[decDiff];
+    si->settlement = sbcd64(p->settlement) / dec_tbl[decDiff];
+    si->prev_close = sbcd64(p->prev_close) / dec_tbl[decDiff];
+    si->prev_settlement = sbcd64(p->prev_settlement) / dec_tbl[decDiff];
     si->prev_oi = bcd64(p->prev_oi);
-    si->open = sbcd64(p->open);
-    si->high = sbcd64(p->high);
-    si->low = sbcd64(p->low);
+    si->open = sbcd64(p->open) / dec_tbl[decDiff];
+    si->high = sbcd64(p->high) / dec_tbl[decDiff];
+    si->low = sbcd64(p->low) / dec_tbl[decDiff];
 
     if (!si->is_subscribed) {
         return 0;
@@ -2210,10 +2238,11 @@ void emd_send_tick(struct SymbolInfo* si) {
     }
 }
 
-int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
+int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0, int pricedec) {
+    int decDiff = pricedec - si->decimals;
     si->tick_ymd = bcd32(t0->date);
     si->tick_hmsf = (uint32_t)bcd64(t0->time);
-    si->close = sbcd64(t0->price);
+    si->close = sbcd64(t0->price) / dec_tbl[decDiff];
     si->tick_vol = bcd32(t0->tickvol);
     si->tot_vol = bcd64(t0->totvol);
     si->tick_value = bcd64(t0->value) / fdec_tbl[bcd32(t0->value_dec)];
@@ -2236,7 +2265,8 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0) {
     return 0;
 }
 
-int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
+int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba, int pricedec) {
+    int decDiff = pricedec - si->decimals;
     si->ba_ymd = bcd32(ba->date);
     si->ba_hmsf = (uint32_t)bcd64(ba->time);
     int depth = bcd32(ba->depth);
@@ -2246,10 +2276,10 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
     struct m2_pv* baItem = (struct m2_pv*)ba->tail;
     int i;
     for (i = 0; i < depth; ++i) {
-        si->bid[i].price = sbcd64(baItem->price);
+        si->bid[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
         si->bid[i].vol = bcd32(baItem->vol);
         baItem++;
-        si->ask[i].price = sbcd64(baItem->price);
+        si->ask[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
         si->ask[i].vol = bcd32(baItem->vol);
         baItem++;
     }
@@ -2295,9 +2325,10 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
 }
 
 //todo
-int mdc_parse_tick_ext(struct SymbolInfo* si, struct m2_tick_ext* t) {
-    si->high = sbcd64(t->high);
-    si->low = sbcd64(t->low);
+int mdc_parse_tick_ext(struct SymbolInfo* si, struct m2_tick_ext* t, int pricedec) {
+    int decDiff = pricedec - si->decimals;
+    si->high = sbcd64(t->high) / dec_tbl[decDiff];
+    si->low = sbcd64(t->low) / dec_tbl[decDiff];
     emd_send_high_low(si);
     return 0;
 }
@@ -2416,12 +2447,12 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
         return 0;
     }
     int pricedec = bcd32(p->decimals);
-    if (si->decimals != pricedec) {
-        Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
-            si->symbol, pricedec, si->decimals);
-        si->decimals = pricedec;
-        return 0;
-    }
+    // if (si->decimals != pricedec) {
+    //     Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
+    //         si->symbol, pricedec, si->decimals);
+    //     si->decimals = pricedec;
+    //     return 0;
+    // }
 
     int hasquote = 0;
     int hastick = 0;
@@ -2429,26 +2460,26 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
     char* tail = p->tail;
     if (p->content_fg & 0x01) {
         hasquote = 1;
-        mdc_parse_quote(si, &p->head, (struct m2_quote*)tail);
+        mdc_parse_quote(si, &p->head, (struct m2_quote*)tail, pricedec);
         tail += sizeof(struct m2_quote);
     }
     if (p->content_fg & 0x02) {
         hastick = 1;
         if (*tail == 0x00) {
-            mdc_parse_tick(si, (struct m2_tick*)tail);
+            mdc_parse_tick(si, (struct m2_tick*)tail, pricedec);
             tail += sizeof(struct m2_tick);
         }
         else {
-            mdc_parse_tick(si, (struct m2_tick*)tail);
+            mdc_parse_tick(si, (struct m2_tick*)tail, pricedec);
             tail += sizeof(struct m2_tick);
-            mdc_parse_tick_ext(si, (struct m2_tick_ext*)tail);
+            mdc_parse_tick_ext(si, (struct m2_tick_ext*)tail, pricedec);
             //#todo, how to deal with high, low, open in this tick?
             tail += sizeof(struct m2_tick_ext);
         }
     }
     if (p->content_fg & 0x04) {
         hasba = 1;
-        mdc_parse_ba(si, (struct m2_ba*)tail);
+        mdc_parse_ba(si, (struct m2_ba*)tail, pricedec);
     }
 
     return 0;
@@ -2590,9 +2621,10 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
         std::vector<std::string> scale_lines;
         char sctmp[sizeof(sg->scales)];
         strcpy(sctmp, sg->scales); // 0;0,0,0,1,1,1|2;0,0,0,2,256,1
-        char* tok;
-        while ((tok = strtok(sctmp, "|")) != NULL) {
+        char* tok = strtok(sctmp, "|");
+        while (tok) {
             scale_lines.push_back(tok);
+            tok = strtok(NULL, "|");
         }
         size_t i;
         for (i = 0; i < scale_lines.size(); ++i) {

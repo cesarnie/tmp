@@ -1,6 +1,6 @@
-#SMX
-#HKF
+SMX
+HKF
 CBT
-#CME
-#CMX
+CME
+CMX
 NYM
