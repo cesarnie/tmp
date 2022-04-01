@@ -1013,9 +1013,9 @@ int mdc_parse_heartbeat(const char* buf, size_t sz) {
     return 0;
 }
 
-struct SymbolRootInfo* get_commroot_info(const char* root, const char* exchange) {
+struct SymbolRootInfo* get_commroot_info(const char* root, const char* exchange, char sectype) {
     char rootkey[36];
-    sprintf(rootkey, "%s;%s", exchange, root);
+    sprintf(rootkey, "%s;%s;%c", exchange, root, sectype);
     simap_t::iterator it = g_srmap.find(rootkey);
     if (it != g_srmap.end()) {
         return gsm->roots + it->second;
@@ -1244,7 +1244,7 @@ void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue)
         ++cidx;
     }
     if (IS_SPREAD(si)) {
-        struct SymbolRootInfo* pRoot = get_commroot_info(si->root_ext, si->exchange);
+        struct SymbolRootInfo* pRoot = get_commroot_info(si->root_ext, si->exchange, si->apex_symbol_type);
         if (pRoot != NULL) {
             strcpy(ue->ColList[cidx].ColName, "20123");
             sprintf(ue->ColList[cidx].ColVal, "%d", (pRoot->extension) ? 1 : 0);
@@ -1365,7 +1365,7 @@ int send_all_symbols(int sleepOnSz) {
                 outsz = sprintf(sendbuf, "V01$%s$%c$Scale$%s",
                     si->exchange,
                     si->apex_symbol_type,
-                    ue.ColList[1].ColVal);
+                    ps.Symbol);
                 emd_send(sendbuf, outsz, ZMQ_SNDMORE);
                 emd_send(jsonbuf, len, 0);
                 onesz = outsz + len;
@@ -1583,9 +1583,10 @@ int mdc_parse_login(const char* buf, size_t sz) {
     return 0;
 }
 
-struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange) {
+// sectype: O;F
+struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange, char sectype) {
     char key[40];
-    sprintf(key, "%s;%s", exchange, root);
+    sprintf(key, "%s;%s;%c", exchange, root, sectype);
     struct SymbolRootInfo* sr = NULL;
     simap_t::iterator iter = g_srmap.find(key);
     if (iter == g_srmap.end()) {
@@ -1595,6 +1596,7 @@ struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange) 
         g_srmap[key] = midx;
         strcpy(sr->group_code, root);
         strcpy(sr->exchange, exchange);
+        sr->type_fg = sectype;
         Logf("alloc symbol root: %s", key);
     }
     else {
@@ -1673,15 +1675,16 @@ void add_spot_symbol(struct SymbolInfo* si) {
     }
     memcpy(sNew, si, sizeof(struct SymbolInfo));
     sNew->type_fg = 0x20;
+    sNew->apex_symbol_type = convert_to_apex_symbol_type(sNew->type_fg)[1];
     strcpy(sNew->symbol, fsiter->second.str1.c_str());
     strcpy(sNew->name, fsiter->second.str2.c_str());
     strcpy(sNew->root_ext, fsiter->second.str1.c_str());
     strcpy(sNew->root, si->root_ext);
     Logf("add symbol %s, %s to map", fsiter->second.str1.c_str(), sNew->name);
 
-    struct SymbolRootInfo* root0 = get_commroot_info(si->root_ext, si->exchange);
+    struct SymbolRootInfo* root0 = get_commroot_info(si->root_ext, si->exchange, si->apex_symbol_type);
     if (root0) {
-        struct SymbolRootInfo* newRoot = make_symbol_root(sNew->root_ext, sNew->exchange);
+        struct SymbolRootInfo* newRoot = make_symbol_root(sNew->root_ext, sNew->exchange, sNew->apex_symbol_type);
         memcpy(newRoot, root0, sizeof(struct SymbolRootInfo));
         strcpy(newRoot->exchange, sNew->exchange);
         strcpy(newRoot->group_code, sNew->root_ext);
@@ -1818,7 +1821,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
 
         if (si->scale_cnt == 0) {
             char rootkey[30];
-            sprintf(rootkey, "%s;%s", si->exchange, si->root);
+            sprintf(rootkey, "%s;%s;%c", si->exchange, si->root, si->apex_symbol_type);
             simap_t::iterator it = g_srmap.find(rootkey);
             if (it != g_srmap.end()) {
                 struct SymbolRootInfo* sr = gsm->roots + it->second;
@@ -2548,7 +2551,7 @@ void dump_symbol_root(struct m2sv_symbol_root* p) {
         txstr(rec->deriv_symbol, deriv_symbol, sizeof(rec->deriv_symbol));
         char currency[9];
         txstr(rec->currency, currency, sizeof(rec->currency));
-        Logf("  |%s grp%d: code=%s, name=%s, sessions=%s, scales=%s, deriv_exchange=%s, deriv_symbol=%s, multdec=%d, mult=%ld, currency=%s, feedec=%d, fee=%ld, taxdec=%d, tax=%ld, lotsz=%d, cat=%c, tz=%d, ext=%c",
+        Logf("  |%s grp%d: code=%s, name=%s, sessions=%s, scales=%s, deriv_exchange=%s, deriv_symbol=%s, multdec=%d, mult=%ld, currency=%s, feedec=%d, fee=%ld, taxdec=%d, tax=%ld, lotsz=%d, cat=0x%02x, tz=%d, ext=%c",
             fmt_plain_head(&p->head),
             i, grp, grpname, sessions, scales, deriv_exchange, deriv_symbol,
             bcd32(rec->contract_multiplier_dec), bcd64(rec->contract_multiplier),
@@ -2556,7 +2559,7 @@ void dump_symbol_root(struct m2sv_symbol_root* p) {
             bcd32(rec->fee_dec), bcd64(rec->fee),
             bcd32(rec->tax_dec), bcd64(rec->tax),
             bcd32(rec->lot_size),
-            rec->category,
+            rec->type_fg,
             bcd32(rec->timezone),
             rec->extension);
         rec++;
@@ -2621,7 +2624,7 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
     for (i = 0; i < cnt; ++i) {
         char grp[25];
         txstr(rec->group_code, grp, 24);
-        struct SymbolRootInfo* sg = make_symbol_root(grp, exchange);
+        struct SymbolRootInfo* sg = make_symbol_root(grp, exchange, rec->type_fg);
         if (sg == NULL) {
             Logf("cannot make symbol group %s", grp);
             continue;
@@ -2659,7 +2662,7 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
         sg->tax_dec = bcd32(rec->tax_dec);
         sg->tax = bcd64(rec->tax);
         sg->lot_size = bcd32(rec->lot_size);
-        sg->category = rec->category;
+        sg->type_fg = rec->type_fg;
         sg->timezone = bcd32(rec->timezone);
         sg->extension = rec->extension;
 

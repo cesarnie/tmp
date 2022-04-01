@@ -185,7 +185,7 @@ struct m2_symbol_root_rec {
     char tax_dec[1];                 //
     char tax[5];                     //
     char lot_size[4];                //
-    char category;                   //
+    char type_fg;                    //
     char timezone[2];                //
     char extension;                  //
 };

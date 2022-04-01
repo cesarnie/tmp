@@ -117,7 +117,7 @@ struct SymbolRootInfo {
     int tax_dec;                 //
     int64_t tax;                 //
     int lot_size;                //
-    char category;               //
+    char type_fg;                //
     int timezone;                //
     char extension;              //
     int scale_cnt;               //
