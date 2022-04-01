@@ -1146,10 +1146,8 @@ void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue)
     sprintf(ue->ColList[cidx].ColVal, "%d", si->decimals);
     ++cidx;
 
-    const char* category = convert_to_apex_symbol_type(si->type_fg);
-
     strcpy(ue->ColList[cidx].ColName, "1151"); // type
-    sprintf(ue->ColList[cidx].ColVal, "%c", category[1]);
+    sprintf(ue->ColList[cidx].ColVal, "%c", si->apex_symbol_type);
     ++cidx;
     strcpy(ue->ColList[cidx].ColName, "55"); // engname
     ue->ColList[cidx].ColVal[0] = '\0';
@@ -1313,6 +1311,27 @@ int emd_send(const char* buf, size_t len, int flags) {
     return ret;
 }
 
+//todo
+int MakePriceScaleEvent(struct SymbolInfo* si, struct Vip2PriceScaleUpdateEvent* ps) {
+    ps->Mode = 63;
+
+    char newSymbolCode[64];
+    convertOptionCode(si->symbol, newSymbolCode);
+
+    sprintf(ps->Symbol, "%s.%s", newSymbolCode, "US");
+    sprintf(ps->SecType, "%c", si->apex_symbol_type);
+    ps->ScaleCount = si->scale_cnt;
+    FillTimeString(ps->Time, JsonValLen);
+    for (int i = 0; i < si->scale_cnt; ++i) {
+        ps->Scales[i].ScopeMin = si->scale_items[i].ScopeMin;
+        ps->Scales[i].ScopeMax = si->scale_items[i].ScopeMax;
+        ps->Scales[i].Numerator = si->scale_items[i].Numerator;
+        ps->Scales[i].Denominator = si->scale_items[i].Denominator;
+        ps->Scales[i].MinMovement = si->scale_items[i].MinMovement;
+    }
+    return 1;
+}
+
 int send_all_symbols(int sleepOnSz) {
     size_t sendsz = 0;
     size_t onesz = 0;
@@ -1335,6 +1354,19 @@ int send_all_symbols(int sleepOnSz) {
             emd_send(sendbuf, outsz, ZMQ_SNDMORE);
             emd_send(jsonbuf, len, 0);
             onesz = outsz + len;
+        }
+
+        //todo
+        if (si->scale_cnt) {
+            struct Vip2PriceScaleUpdateEvent ps;
+            MakePriceScaleEvent(si, &ps);
+            len = MakeJsonUpdateScalesEvent(&ps, jsonbuf, 2048);
+            if (len > 0) {
+                outsz = sprintf(sendbuf, "V01$%s$A$UE$ALL", ue.ColList[1].ColVal);
+                emd_send(sendbuf, outsz, ZMQ_SNDMORE);
+                emd_send(jsonbuf, len, 0);
+                onesz = outsz + len;
+            }
         }
         sendsz += onesz;
         flowctrl += onesz;
@@ -1732,6 +1764,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         si->end_date = bcd32(rec->end_date);
         si->last_trade_date = bcd32(rec->last_trade_date);
         si->type_fg = rec->type_fg;
+        si->apex_symbol_type = convert_to_apex_symbol_type(si->type_fg)[1];
         si->lot_size = bcd32(rec->lot_size);
         txstr(rec->strike_price, si->strike_price, sizeof(rec->strike_price));
         si->extra_fg = rec->extra_fg;
@@ -1741,7 +1774,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         char sctmp[sizeof(si->scale)];
         strcpy(sctmp, si->scale); // 0;0,0,0,1,1,1|2;0,0,0,2,256,1
         char* tok;
-        while ((tok = strtok(sctmp, "|")) != NULL) {
+        while ((tok = strtok(sctmp, ";")) != NULL) {
             scale_lines.push_back(tok);
         }
         size_t i;
@@ -1932,7 +1965,7 @@ int SendTradeSessionStatus(struct SymbolInfo* si, int status) {
         char sendbuf[512];
         int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
             ConvertToMIC(si->exchange),
-            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->apex_symbol_type,
             s.FilterVal);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
@@ -2044,7 +2077,7 @@ void emd_send_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
         char sendbuf[512];
         int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
             ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
-            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->apex_symbol_type,
             si->symbol);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
@@ -2076,7 +2109,7 @@ void emd_send_high_low(struct SymbolInfo* si) {
         char sendbuf[140];
         int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
             ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
-            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->apex_symbol_type,
             r1.FilterVal);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
@@ -2149,9 +2182,8 @@ void emd_send_tick(struct SymbolInfo* si) {
 
     char newSymbolCode[64];
     convertOptionCode(si->symbol, newSymbolCode);
-    char symbolType = convert_to_apex_symbol_type(si->type_fg)[1];
     sprintf(t.Symbol, "%s.US", newSymbolCode);
-    sprintf(t.SecType, "%c", symbolType);
+    sprintf(t.SecType, "%c", si->apex_symbol_type);
 
     t.Tick.TradeType = 3;
     strcpy(t.Tick.Plottable, "11");
@@ -2171,7 +2203,7 @@ void emd_send_tick(struct SymbolInfo* si) {
         char sendbuf[512];
         int outsz = sprintf(sendbuf, "V01$%s$%c$Tick$%s",
             ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
-            symbolType,
+            si->apex_symbol_type,
             t.Symbol);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
@@ -2232,8 +2264,7 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
     char newSymbolCode[64];
     convertOptionCode(si->symbol, newSymbolCode);
     sprintf(r1.Symbol, "%s.US", newSymbolCode);
-    char sectype = convert_to_apex_symbol_type(si->type_fg)[1];
-    sprintf(r1.SecType, "%c", sectype);
+    sprintf(r1.SecType, "%c", si->apex_symbol_type);
     fill_timestamp(si->ba_ymd, si->ba_hmsf, r1.BA.BATime, JsonValLen);
     r1.BA.TradeType = 3;
     r1.BA.MDFeedT = 101;
@@ -2254,7 +2285,7 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba) {
         char sendbuf[512];
         int outsz = sprintf(sendbuf, "V01$%s$%c$BA$%s",
             ConvertToMIC(si->exchange),
-            convert_to_apex_symbol_type(si->type_fg)[1],
+            si->apex_symbol_type,
             r1.Symbol);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);

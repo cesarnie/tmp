@@ -1,16 +1,4 @@
-send price scale
-    0;0,0,0,1,1,1|2;0,0,0,2,256,1
-    0	/* 預設(其他) */
-	1	/* 最近月 */
-	2	/* 價差商品 */
-	Mdct_Price		ScopeMin;			/* 價格範圍最小值(下限) */
-	Mdct_Price		ScopeMax;			/* 價格範圍是大值(上限) */
-	Mdct_ScopeMode	ScopeMode;			/* 價格範圍比較模式 */
-	Mdct_Float		Numerator;			/* 價格基準分子 */
-	Mdct_Float		Denominator;		/* 價格基準分母 */
-	Mdct_Int		MinMovement;		/* 最小跳動點數 */
 sigint cannot kill process    
-
 
 2022/2/18
     open shared memory to store data
@@ -59,3 +47,16 @@ sigint cannot kill process
     處理併筆格式
     spf1.0的很多zmq send沒有實做到2.0
     open event
+2022/3/30
+    send price scale
+        0;0,0,0,1,1,1|2;0,0,0,2,256,1
+        0	/* 預設(其他) */
+        1	/* 最近月 */
+        2	/* 價差商品 */
+        Mdct_Price		ScopeMin;			/* 價格範圍最小值(下限) */
+        Mdct_Price		ScopeMax;			/* 價格範圍是大值(上限) */
+        Mdct_ScopeMode	ScopeMode;			/* 價格範圍比較模式 */
+        Mdct_Float		Numerator;			/* 價格基準分子 */
+        Mdct_Float		Denominator;		/* 價格基準分母 */
+        Mdct_Int		MinMovement;		/* 最小跳動點數 */
+    convert_to_apex_symbol_type
