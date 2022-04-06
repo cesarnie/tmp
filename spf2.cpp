@@ -1778,6 +1778,10 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         if (!si) {
             continue;
         }
+        int is_spread = 0;
+        if (strchr(symbol, '/')) {
+            is_spread = 1;
+        }
         simap_t::iterator efi = g_exchg2feed_map.find(exchange);
         if (efi != g_exchg2feed_map.end()) {
             si->feedID = efi->second;
@@ -1826,26 +1830,44 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
             if (it != g_srmap.end()) {
                 struct SymbolRootInfo* sr = gsm->roots + it->second;
                 for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
-                    if ((si->extra_fg & 0x04) && sr->scale_items[i].type == 2) {
-                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
-                        si->scale_cnt++;
-                        si->scale_from_root = 1;
+                    //if ((si->extra_fg & 0x04) && sr->scale_items[i].type == 2) {  //spread
+                    //     memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                    //     si->scale_cnt++;
+                    //     si->scale_from_root = 1;
+                    // }
+                    // 上游丟的這個旗標數值是錯的，所以暫時不判斷
+                    // else if ((si->extra_fg & 0x08) && sr->scale_items[i].type == 1) {
+                    //     memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                    //     si->scale_cnt++;
+                    //     si->scale_from_root = 1;
+                    // }
+                    // else if (sr->scale_items[i].type == 0) {
+                    //     memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                    //     si->scale_cnt++;
+                    //     si->scale_from_root = 1;
+                    // }                    
+                    if (is_spread) {
+                        if (sr->scale_items[i].type == 2) {
+                            memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                            si->scale_cnt++;
+                            si->scale_from_root = 1;
+                        }
                     }
-                    else if ((si->extra_fg & 0x08) && sr->scale_items[i].type == 1) {
-                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
-                        si->scale_cnt++;
-                        si->scale_from_root = 1;
-                    }
-                    else if (sr->scale_items[i].type == 0) {
-                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
-                        si->scale_cnt++;
-                        si->scale_from_root = 1;
+                    else {
+                        if (sr->scale_items[i].type == 0) {
+                            memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                            si->scale_cnt++;
+                            si->scale_from_root = 1;
+                        }
                     }
                 }
             }
             else {
-                Logf("err: no scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
+                Logf("err: no root scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
             }
+        }
+        if (si->scale_cnt==0) {
+            Logf("err: no scale info for symbol %s", si->symbol);
         }
 
         if (si->scale_cnt) {
@@ -2624,7 +2646,7 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
     for (i = 0; i < cnt; ++i) {
         char grp[25];
         txstr(rec->group_code, grp, 24);
-        struct SymbolRootInfo* sg = make_symbol_root(grp, exchange, rec->type_fg);
+        struct SymbolRootInfo* sg = make_symbol_root(grp, exchange, convert_to_apex_symbol_type(rec->type_fg)[1]);
         if (sg == NULL) {
             Logf("cannot make symbol group %s", grp);
             continue;
@@ -2643,6 +2665,7 @@ int mdc_parse_symbol_root(const char* buf, size_t sz) {
         }
         size_t i;
         for (i = 0; i < scale_lines.size(); ++i) {
+            //經過實際驗證，上游並未丟出flag==0x01的scale類別(近月)，而且spread的flag給的是錯的，所以必須自己檢查是否為spread
             if (proc_typed_scale_line(scale_lines[i], sg->scale_items + sg->scale_cnt)) {
                 sg->scale_cnt++;
                 if (sg->scale_cnt >= 5) {
