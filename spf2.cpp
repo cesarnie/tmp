@@ -1863,7 +1863,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                 }
             }
             else {
-                Logf("err: no root scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
+                Logf("warn: no root scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
             }
         }
         //如果還是找不到scale，就把default搬過來用
@@ -1880,6 +1880,22 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                         si->scale_from_root = 1;
                     }
                 }
+                Logf("warn: use default scale for spread symbol=%s", si->symbol);
+            }
+        }
+        //如果還是找不到scale，就把價差的scale搬來當default的用
+        if (si->scale_cnt == 0) {
+            char rootkey[30];
+            sprintf(rootkey, "%s;%s;%c", si->exchange, si->root, si->apex_symbol_type);
+            simap_t::iterator it = g_srmap.find(rootkey);
+            if (it != g_srmap.end()) {
+                struct SymbolRootInfo* sr = gsm->roots + it->second;
+                for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
+                    memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                    si->scale_cnt++;
+                    si->scale_from_root = 1;
+                }
+                Logf("warn: use spread scale for common symbol=%s", si->symbol);
             }
         }
         if (si->scale_cnt) {
