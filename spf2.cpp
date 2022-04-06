@@ -1845,7 +1845,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                     //     memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
                     //     si->scale_cnt++;
                     //     si->scale_from_root = 1;
-                    // }                    
+                    // }
                     if (is_spread) {
                         if (sr->scale_items[i].type == 2) {
                             memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
@@ -1866,12 +1866,27 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                 Logf("err: no root scale info for symbol %s, extra_fg=%02x", si->symbol, si->extra_fg);
             }
         }
-        if (si->scale_cnt==0) {
-            Logf("err: no scale info for symbol %s", si->symbol);
+        //如果還是找不到scale，就把default搬過來用
+        if (si->scale_cnt == 0) {
+            char rootkey[30];
+            sprintf(rootkey, "%s;%s;%c", si->exchange, si->root, si->apex_symbol_type);
+            simap_t::iterator it = g_srmap.find(rootkey);
+            if (it != g_srmap.end()) {
+                struct SymbolRootInfo* sr = gsm->roots + it->second;
+                for (i = 0; i < (size_t)sr->scale_cnt; ++i) {
+                    if (sr->scale_items[i].type == 0) {
+                        memcpy(si->scale_items + si->scale_cnt, &sr->scale_items[i].item, sizeof(struct ScaleItem));
+                        si->scale_cnt++;
+                        si->scale_from_root = 1;
+                    }
+                }
+            }
         }
-
         if (si->scale_cnt) {
             si->decimals = get_decimal_count_from_denominator(si->scale_items[0].Numerator, si->scale_items[0].Denominator);
+        }
+        else {
+            Logf("err: no scale info for symbol %s", si->symbol);
         }
 
         char exchgcommroottype[64];
