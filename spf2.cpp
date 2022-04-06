@@ -1880,7 +1880,9 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                         si->scale_from_root = 1;
                     }
                 }
-                Logf("warn: use default scale for spread symbol=%s", si->symbol);
+                if (si->scale_cnt) {
+                    Logf("warn: use default scale for spread symbol=%s", si->symbol);
+                }
             }
         }
         //如果還是找不到scale，就把價差的scale搬來當default的用
@@ -1895,7 +1897,9 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
                     si->scale_cnt++;
                     si->scale_from_root = 1;
                 }
-                Logf("warn: use spread scale for common symbol=%s", si->symbol);
+                if (si->scale_cnt) {
+                    Logf("warn: use spread scale for common symbol=%s", si->symbol);
+                }
             }
         }
         if (si->scale_cnt) {
