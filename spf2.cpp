@@ -1413,7 +1413,6 @@ struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
         int midx = si2midx(si);
         memset(si, 0x00, sizeof(struct SymbolInfo));
         si->category_id = -1;
-        si->decimals = 99;
         g_simap[symbol] = midx;
         strcpy(si->symbol, symbol);
         strcpy(si->exchange, exchange);
@@ -2232,6 +2231,11 @@ void on_session_close(struct SymbolInfo* si, int oldStatus) {
 
 int mdc_parse_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote* p, int decimals) {
     int decDiff = decimals - si->decimals;
+    if (decDiff<0) {
+        Logf("err: decdiff negative for symbol=%s", si->symbol);
+        return 0;
+    }
+
     si->session_date = bcd32(p->trade_date);
     si->rise_limit = sbcd64(p->rise_limit) / dec_tbl[decDiff];
     si->fall_limit = sbcd64(p->fall_limit) / dec_tbl[decDiff];
@@ -2307,6 +2311,11 @@ void emd_send_tick(struct SymbolInfo* si) {
 
 int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0, int pricedec) {
     int decDiff = pricedec - si->decimals;
+    if (decDiff<0) {
+        Logf("err: decdiff negative for symbol=%s", si->symbol);
+        return 0;
+    }
+
     si->tick_ymd = bcd32(t0->date);
     si->tick_hmsf = (uint32_t)bcd64(t0->time);
     si->close = sbcd64(t0->price) / dec_tbl[decDiff];
@@ -2334,6 +2343,11 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0, int pricedec) {
 
 int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba, int pricedec) {
     int decDiff = pricedec - si->decimals;
+    if (decDiff<0) {
+        Logf("err: decdiff negative for symbol=%s", si->symbol);
+        return 0;
+    }
+
     si->ba_ymd = bcd32(ba->date);
     si->ba_hmsf = (uint32_t)bcd64(ba->time);
     int depth = bcd32(ba->depth);
@@ -2394,9 +2408,24 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba, int pricedec) {
 //todo
 int mdc_parse_tick_ext(struct SymbolInfo* si, struct m2_tick_ext* t, int pricedec) {
     int decDiff = pricedec - si->decimals;
-    si->high = sbcd64(t->high) / dec_tbl[decDiff];
-    si->low = sbcd64(t->low) / dec_tbl[decDiff];
-    emd_send_high_low(si);
+    if (decDiff<0) {
+        Logf("err: decdiff negative for symbol=%s", si->symbol);
+        return 0;
+    }
+    int dirty = 0;
+    int64_t high = sbcd64(t->high) / dec_tbl[decDiff];    
+    if (high>si->high) {
+        si->high = high;
+        dirty = 1;
+    }
+    int64_t low = sbcd64(t->low) / dec_tbl[decDiff];
+    if (low<si->low) {
+        si->low = low;
+        dirty = 1;
+    }
+    if (dirty) {
+        emd_send_high_low(si);
+    }
     return 0;
 }
 
@@ -2514,18 +2543,6 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
         return 0;
     }
     int pricedec = bcd32(p->decimals);
-    if (si->decimals == 99) {
-        si->decimals = pricedec;
-    }
-    else {
-        if (si->decimals != pricedec) {
-            Logf("err: symbol=%s, tick decimals=%d differs from symbol decimals=%d",
-                si->symbol, pricedec, si->decimals);
-            si->decimals = pricedec;
-            return 0;
-        }
-    }
-
     int hasquote = 0;
     int hastick = 0;
     int hasba = 0;
