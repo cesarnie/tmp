@@ -829,7 +829,7 @@ int mdc_req_mktdata(char cmd, int feedid, int64_t seqno) {
     int64_to_bcd(1, p.head.ver, 1);
     struct timespec tp;
     clock_gettime(CLOCK_REALTIME, &tp);
-    int hms = to_ymd(tp.tv_sec);
+    int hms = to_hms(tp.tv_sec);
     int64_to_bcd(hms * 10000 + tp.tv_nsec / 100000, p.head.time, sizeof(p.head.time));
     int64_to_bcd(sizeof(struct m2cl_req_quote) - sizeof(struct m2_head), p.head.len, sizeof(p.head.len));
 
@@ -1993,6 +1993,16 @@ int mdc_parse_sub_reply(const char* buf, size_t sz) {
     char msg[97];
     txstr(p->message, msg, 96);
     Logf("  |cmd=%c, copyid=%d, seqno=%ld, msg=%s", p->cmd, feedid, seqno, msg);
+
+    if (g_req_exchanges.size() > 0) {
+        std::string exchange = g_req_exchanges.front();
+        g_req_exchanges.pop();
+        simap_t::iterator fei = g_exchg2feed_map.find(exchange);
+        if (fei != g_exchg2feed_map.end()) {
+            mdc_req_mktdata('X', fei->second, 0);
+        }
+    }
+
     return 0;
 }
 
