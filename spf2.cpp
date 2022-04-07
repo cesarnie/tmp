@@ -26,7 +26,7 @@
 #include "fmtjson.h"
 #include "spf2.h"
 
-#define SPF2_VER "0.0.5"
+#define SPF2_VER "0.0.6"
 #define MAX_URL_LEN 256
 
 #define si2midx(x) ((x) - (gsm->symbols))
@@ -1417,7 +1417,7 @@ struct SymbolInfo* make_symbol(const char* symbol, const char* exchange) {
         strcpy(si->symbol, symbol);
         strcpy(si->exchange, exchange);
         si->session_status = -1;
-        Logf("alloc symbol: %s", symbol);
+        // Logf("alloc symbol: %s", symbol);
     }
     else {
         si = gsm->symbols + iter->second;
@@ -1504,8 +1504,19 @@ void on_symbol_complete() {
     }
 
     send_all_symbols(gSleepKB * 1024);
-    //todo: send scale
-    mdc_req_mktdata('S', 4, 0);
+
+    //request mktdata
+    for (size_t j = 0; j < gExchanges.size(); ++j) {
+        g_req_exchanges.push(gExchanges[j]);
+    }
+    if (g_req_exchanges.size() > 0) {
+        std::string exchange = g_req_exchanges.front();
+        g_req_exchanges.pop();
+        simap_t::iterator fei = g_exchg2feed_map.find(exchange);
+        if (fei != g_exchg2feed_map.end()) {
+            mdc_req_mktdata('X', fei->second, 0);
+        }
+    }
 }
 
 void on_symbol_root_complete() {
@@ -1596,7 +1607,7 @@ struct SymbolRootInfo* make_symbol_root(const char* root, const char* exchange, 
         strcpy(sr->group_code, root);
         strcpy(sr->exchange, exchange);
         sr->type_fg = sectype;
-        Logf("alloc symbol root: %s", key);
+        // Logf("alloc symbol root: %s", key);
     }
     else {
         sr = gsm->roots + iter->second;
@@ -2171,7 +2182,7 @@ void emd_send_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
         int outsz = sprintf(sendbuf, "V01$%s$%c$UE$%s",
             ConvertToMIC(si->exchange), //#todo, remap to spf1's exchange code
             si->apex_symbol_type,
-            si->symbol);
+            r1.FilterVal);
         emd_send(sendbuf, outsz, ZMQ_SNDMORE);
         emd_send(jsonbuf, len, 0);
     }

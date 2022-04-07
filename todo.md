@@ -1,5 +1,4 @@
 
-extra_fg is wrong for spread, we need identify spread using '/', otherwise, scale will be copied wrongly
 sigint cannot kill process    
 
 2022/2/18
@@ -64,3 +63,5 @@ sigint cannot kill process
     convert_to_apex_symbol_type
 2022/3/31
     send scale
+2022/4/6
+    extra_fg is wrong for spread, we need identify spread using '/', otherwise, scale will be copied wrongly
