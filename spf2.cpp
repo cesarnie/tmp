@@ -753,6 +753,9 @@ void int64_to_bcd(uint64_t data, char* buffer, int num) {
 }
 
 int mdc_send(char* data, size_t sz) {
+    if (g_in_fh) {
+        return 0;
+    }
     write(g_mdc_sock, data, sz);
     if (g_sav_fh) {
         fwrite(data, sz, 1, g_sav_fh);
@@ -3094,10 +3097,11 @@ int main(int argc, char** argv) {
         exit(1);
     }
 
-    char buf[1024];
-    g_mdc_sock = mdc_reconnect(g_mdc_addr);
-    if (g_mdc_sock!=-1) {
-        on_mdc_connect();
+    if (!g_in_fh) {
+        g_mdc_sock = mdc_reconnect(g_mdc_addr);
+        if (g_mdc_sock!=-1) {
+            on_mdc_connect();
+        }
     }
     while (1) {
         int readcnt;
