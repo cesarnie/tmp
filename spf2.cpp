@@ -1095,7 +1095,8 @@ void FillTimeString(char* buf, int buflen) {
     strftime(buf, buflen, "%Y%m%d_%H:%M:%S.000", t1);
 }
 
-void convertOptionCode(const char* c0, char* c1) {
+//BO.2205/2207 -> BO.2205/BO.2207
+void convert_to_emd_symbol(const char* c0, char* c1) {
     const char* dashPos = strchr(c0, '/');
     if (dashPos == NULL) {
         strcpy(c1, c0);
@@ -1122,10 +1123,8 @@ void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue)
     ue->Mode = 57;
     ue->Version = 0;
 
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
     strcpy(ue->FilterCol, "SYMBO");
-    sprintf(ue->FilterVal, "%s.%s", newSymbolCode, "US");
+    sprintf(ue->FilterVal, "%s.%s", si->emd_symbol, "US");
     FillTimeString(ue->EventTime, JsonValLen);
     ue->EventType = 4;
     int cidx = 0;
@@ -1136,10 +1135,10 @@ void make_symbol_update_event(struct SymbolInfo* si, struct Vip2UpdateEvent* ue)
     strcpy(ue->ColList[cidx].ColVal, ConvertToMIC(si->exchange));
     ++cidx;
     strcpy(ue->ColList[cidx].ColName, "48"); // symbol
-    sprintf(ue->ColList[cidx].ColVal, "%s.%s", newSymbolCode, "US");
+    sprintf(ue->ColList[cidx].ColVal, "%s.%s", si->emd_symbol, "US");
     ++cidx;
     strcpy(ue->ColList[cidx].ColName, "RegularizeCode");
-    sprintf(ue->ColList[cidx].ColVal, "%s.%s", newSymbolCode, "US");
+    sprintf(ue->ColList[cidx].ColVal, "%s.%s", si->emd_symbol, "US");
     ++cidx;
 
     strcpy(ue->ColList[cidx].ColName, "20113"); // decimals
@@ -1315,10 +1314,7 @@ int emd_send(const char* buf, size_t len, int flags) {
 int MakePriceScaleEvent(struct SymbolInfo* si, struct Vip2PriceScaleUpdateEvent* ps) {
     ps->Mode = 63;
 
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-
-    sprintf(ps->Symbol, "%s.%s", newSymbolCode, "US");
+    sprintf(ps->Symbol, "%s.%s", si->emd_symbol, "US");
     sprintf(ps->SecType, "%c", si->apex_symbol_type);
     ps->ScaleCount = si->scale_cnt;
     FillTimeString(ps->Time, JsonValLen);
@@ -1788,6 +1784,7 @@ int mdc_parse_symbol(const char* buf, size_t sz) {
         if (!si) {
             continue;
         }
+        convert_to_emd_symbol(symbol, si->emd_symbol);
         int is_spread = 0;
         if (strchr(symbol, '/')) {
             is_spread = 1;
@@ -2055,15 +2052,12 @@ int send_tick(const LPMdcs_QuotationPtr q, struct SymbolCache* psi) {
 */
 
 // 0: clear quote, 2: open, 7: close
-void MakeSymbolTradeSessionUpdateEvent(const char* symbol, struct Vip2UpdateEvent* r1, int status) {
+void MakeSymbolTradeSessionUpdateEvent(struct SymbolInfo* si, struct Vip2UpdateEvent* r1, int status) {
     r1->Mode = 57;
     r1->Version = 0;
 
-    char newSymbolCode[64];
-    convertOptionCode(symbol, newSymbolCode);
-
     strcpy(r1->FilterCol, "SYMBO");
-    sprintf(r1->FilterVal, "%s.%s", newSymbolCode, "US");
+    sprintf(r1->FilterVal, "%s.%s", si->emd_symbol, "US");
     FillTimeString(r1->EventTime, JsonValLen);
     r1->EventType = 5;
     r1->ColListCnt = 1;
@@ -2075,7 +2069,7 @@ int SendTradeSessionStatus(struct SymbolInfo* si, int status) {
     //int sleepOnSz = gSleepKB * 1024;
     //static int flowCtrl = 0;
     struct Vip2UpdateEvent s;
-    MakeSymbolTradeSessionUpdateEvent(si->symbol, &s, status);
+    MakeSymbolTradeSessionUpdateEvent(si, &s, status);
     char jsonbuf[512];
     int len = MakeJsonUpdateEvent(&s, jsonbuf, 512);
     if (len > 0) {
@@ -2130,11 +2124,8 @@ void emd_send_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
     r1.Mode = 57;
     r1.Version = 0;
 
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-
     strcpy(r1.FilterCol, "SYMBO");
-    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
+    sprintf(r1.FilterVal, "%s.%s", si->emd_symbol, "US");
     struct timespec tspec;
     clock_gettime(CLOCK_REALTIME, &tspec);
     int ymd = to_ymd(tspec.tv_sec);
@@ -2207,11 +2198,8 @@ void emd_send_high_low(struct SymbolInfo* si) {
     r1.Mode = 57;
     r1.Version = 0;
 
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-
     strcpy(r1.FilterCol, "SYMBO");
-    sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
+    sprintf(r1.FilterVal, "%s.%s", si->emd_symbol, "US");
     fill_timestamp(si->tick_ymd, si->tick_hmsf, r1.EventTime, JsonValLen);
     r1.EventType = 2;
     int col = 0;
@@ -2306,9 +2294,7 @@ void emd_send_tick(struct SymbolInfo* si) {
     t.Mode = 51;
     t.Version = 48;
 
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-    sprintf(t.Symbol, "%s.US", newSymbolCode);
+    sprintf(t.Symbol, "%s.US", si->emd_symbol);
     sprintf(t.SecType, "%c", si->apex_symbol_type);
 
     t.Tick.TradeType = 3;
@@ -2408,9 +2394,7 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba, int pricedec) {
     memset(&r1, 0x00, sizeof(struct Vip2UpdateBA));
     r1.Mode = 53;
     r1.Version = 48;
-    char newSymbolCode[64];
-    convertOptionCode(si->symbol, newSymbolCode);
-    sprintf(r1.Symbol, "%s.US", newSymbolCode);
+    sprintf(r1.Symbol, "%s.US", si->emd_symbol);
     sprintf(r1.SecType, "%c", si->apex_symbol_type);
     fill_timestamp(si->ba_ymd, si->ba_hmsf, r1.BA.BATime, JsonValLen);
     r1.BA.TradeType = 3;

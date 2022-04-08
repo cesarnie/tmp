@@ -41,6 +41,7 @@ struct pv {
 
 struct SymbolInfo {
     char symbol[25];
+    char emd_symbol[30];
     char name[49];
     char exchange[13];
     char root_ext[13]; //EW(週期貨)在這裡會被換成ES，原來的EW會放在original_root
