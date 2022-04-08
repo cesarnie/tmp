@@ -11,5 +11,10 @@ int main(int argc, char** argv) {
     spf2shm_init(shmname, 1);
     Logf("shm ver=%d, size=%ld", gsm->shm_version, gsm->shm_size);
 
+    int i;
+    for (i=0; i<gsm->symbol_cnt; i++) {
+        printf("symbol=%s\n", gsm->symbols[i].symbol);
+    }
+
     spf2shm_destroy();
 }
