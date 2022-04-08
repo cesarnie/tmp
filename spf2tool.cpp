@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
 
     char shmname[256];
     sprintf(shmname, "spf2shm.%s", SHM_VER);
-    spf2shm_init(shmname, 1);
+    spf2shm_init(shmname, 0);
     Logf("shm ver=%d, size=%ld", gsm->shm_version, gsm->shm_size);
 
     int i;

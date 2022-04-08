@@ -80,7 +80,7 @@ std::queue<std::string> g_req_exchanges;              //
 char g_ibuf[MDC_MAX_SZ];                              //
 s2smap_t gAlterCommrootMap;                           //CME;EW;f/o --> ES, 用來map周期貨/選擇權到實際的月商品代碼
 
-static unsigned long dec_tbl[] = {
+static int64_t dec_tbl[] = {
     1,
     10,
     100,
