@@ -1,4 +1,5 @@
-
+record input
+replay
 sigint cannot kill process    
 
 2022/2/18

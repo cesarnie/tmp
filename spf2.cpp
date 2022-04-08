@@ -2002,6 +2002,9 @@ int mdc_parse_sub_reply(const char* buf, size_t sz) {
             mdc_req_mktdata('X', fei->second, 0);
         }
     }
+    else {
+        Logf("request mktdata complete");
+    }
 
     return 0;
 }
@@ -2132,10 +2135,11 @@ void emd_send_quote(struct SymbolInfo* si, struct m2_head* head, struct m2_quote
 
     strcpy(r1.FilterCol, "SYMBO");
     sprintf(r1.FilterVal, "%s.%s", newSymbolCode, "US");
-    time_t nowt = time(NULL);
-    int ymd = to_ymd(nowt); //#todo, date value will be incorrect on midnight
-    int64_t headtime = bcd64(head->time);
-    fill_timestamp(ymd, headtime, r1.EventTime, JsonValLen);
+    struct timespec tspec;
+    clock_gettime(CLOCK_REALTIME, &tspec);
+    int ymd = to_ymd(tspec.tv_sec);
+    int64_t hms = to_hms(tspec.tv_sec) * 10000 + tspec.tv_nsec / 100000;
+    fill_timestamp(ymd, hms, r1.EventTime, JsonValLen);
     r1.EventType = 2;
     int col = 0;
     if (fexist(p, QM_OPEN_REF)) {
@@ -2237,12 +2241,14 @@ void on_session_clear(struct SymbolInfo* si, int oldStatus) {
 }
 
 void on_session_open(struct SymbolInfo* si, int oldStatus) {
-    SendTradeSessionStatus(si, TRADE_CLOSE);
-    SendTradeSessionStatus(si, TRADE_CLEAR);
+    Logf("OnOpen: %s", si->symbol);
+    // SendTradeSessionStatus(si, TRADE_CLOSE);
+    // SendTradeSessionStatus(si, TRADE_CLEAR);
     SendTradeSessionStatus(si, TRADE_OPEN);
 }
 
 void on_session_close(struct SymbolInfo* si, int oldStatus) {
+    Logf("OnClose: %s", si->symbol);
     if (si->session_status != 3) {
         Logf("send additional open signal: symbol=%s", si->symbol);
         SendTradeSessionStatus(si, TRADE_OPEN);
@@ -2351,7 +2357,7 @@ int mdc_parse_tick(struct SymbolInfo* si, struct m2_tick* t0, int pricedec) {
     if (si->close > si->high) {
         si->high = si->close;
     }
-    if (si->close < si->low) {
+    if (si->low == 0 || si->close < si->low) {
         si->low = si->close;
     }
 
@@ -2375,15 +2381,24 @@ int mdc_parse_ba(struct SymbolInfo* si, struct m2_ba* ba, int pricedec) {
     if (depth > 20) {
         depth = 20;
     }
+    si->order_depth = depth;
     struct m2_pv* baItem = (struct m2_pv*)ba->tail;
     int i;
-    for (i = 0; i < depth; ++i) {
-        si->bid[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
-        si->bid[i].vol = bcd32(baItem->vol);
-        baItem++;
-        si->ask[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
-        si->ask[i].vol = bcd32(baItem->vol);
-        baItem++;
+    for (i = 0; i < 20; ++i) {
+        if (i < depth) {
+            si->bid[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
+            si->bid[i].vol = bcd32(baItem->vol);
+            baItem++;
+            si->ask[i].price = sbcd64(baItem->price) / dec_tbl[decDiff];
+            si->ask[i].vol = bcd32(baItem->vol);
+            baItem++;
+        }
+        else {
+            si->bid[i].price = 0;
+            si->bid[i].vol = 0;
+            si->ask[i].price = 0;
+            si->ask[i].vol = 0;
+        }
     }
 
     if (!si->is_subscribed) {
@@ -2440,7 +2455,7 @@ int mdc_parse_tick_ext(struct SymbolInfo* si, struct m2_tick_ext* t, int pricede
         dirty = 1;
     }
     int64_t low = sbcd64(t->low) / dec_tbl[decDiff];
-    if (low<si->low) {
+    if (si->low == 0 || low < si->low) {
         si->low = low;
         dirty = 1;
     }
@@ -2550,9 +2565,6 @@ int mdc_parse_mktdata(const char* buf, size_t sz) {
     struct m2sv_quote* p = (struct m2sv_quote*)buf;
     if (g_plain) {
         dump_mktdata(p);
-    }
-    if (p->data_type != 'R') {
-        return 0;
     }
     char exchange[13];
     txstr(p->exchange, exchange, 12);

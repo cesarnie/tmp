@@ -64,6 +64,7 @@ struct SymbolInfo {
     uint32_t tick_hmsf;
     int ba_ymd;
     uint32_t ba_hmsf;
+    int order_depth;
     struct pv bid[20];
     struct pv ask[20];
     int session_status;      //
